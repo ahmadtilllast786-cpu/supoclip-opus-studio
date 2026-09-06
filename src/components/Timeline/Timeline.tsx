@@ -69,6 +69,11 @@ interface TimelineProps {
   onAddPunchZoom: () => void;
   onOpenDiagnostics?: () => void;
   diagnosticSettings?: DiagnosticSettings;
+  onPurgeOverlaysAndSfx?: () => void;
+  masterOverlayVisible?: boolean;
+  onToggleMasterOverlay?: () => void;
+  masterSfxMuted?: boolean;
+  onToggleMasterSfx?: () => void;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({
@@ -94,12 +99,17 @@ export const Timeline: React.FC<TimelineProps> = ({
   setSelectedCaptionId,
   words = [],
   setWords,
-  detectedLanguage = 'en',
+  detectedLanguage = 'auto',
   isPlaying = false,
   setIsPlaying,
   onAddPunchZoom,
   onOpenDiagnostics,
   diagnosticSettings,
+  onPurgeOverlaysAndSfx,
+  masterOverlayVisible,
+  onToggleMasterOverlay,
+  masterSfxMuted,
+  onToggleMasterSfx,
 }) => {
   // Timeline Zoom & Viewport Sizing (Adjusted to One Screen by Default)
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
@@ -127,13 +137,17 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [isAudioLocked, setIsAudioLocked] = useState(false);
   const [isSfxLocked, setIsSfxLocked] = useState(false);
 
-  // Track Visibility & Mute States
+  // Track Visibility & Mute States (Master Override or Local Fallback)
   const [isCaptionVisible, setIsCaptionVisible] = useState(true);
   const [isOverlayVisible, setIsOverlayVisible] = useState(true);
   const [isVideoVisible, setIsVideoVisible] = useState(true);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isSfxMuted, setIsSfxMuted] = useState(false);
   const [isAudioSolo, setIsAudioSolo] = useState(false);
+
+  const effectiveOverlayVisible = masterOverlayVisible !== undefined ? masterOverlayVisible : isOverlayVisible;
+  const effectiveSfxMuted = masterSfxMuted !== undefined ? masterSfxMuted : isSfxMuted;
+  const waveformCacheRef = useRef<Map<string, number[]>>(new Map());
 
   // Trimming State
   const [trimmingClipId, setTrimmingClipId] = useState<string | null>(null);
@@ -649,14 +663,20 @@ export const Timeline: React.FC<TimelineProps> = ({
   const rafTrimRef = useRef<number | null>(null);
 
   const handleTrimStart = (
-    e: React.MouseEvent,
+    e: React.PointerEvent,
     clipId: string,
     edge: 'left' | 'right'
   ) => {
     e.stopPropagation();
+    e.preventDefault();
     if (isVideoLocked) return;
     const clip = clips.find((c) => c.id === clipId);
     if (!clip) return;
+
+    const currentTarget = e.currentTarget as HTMLElement;
+    try {
+      currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
 
     setTrimmingClipId(clipId);
     setTrimEdge(edge);
@@ -665,7 +685,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     setTrimInitialOut(clip.outPoint);
     setTrimDeltaSec(0);
 
-    const handleTrimMove = (moveEvent: MouseEvent) => {
+    const handleTrimMove = (moveEvent: PointerEvent) => {
       if (rafTrimRef.current !== null) cancelAnimationFrame(rafTrimRef.current);
       rafTrimRef.current = requestAnimationFrame(() => {
         const deltaPixels = moveEvent.clientX - e.clientX;
@@ -707,6 +727,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     };
 
     const handleTrimEnd = () => {
+      try {
+        currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
       setTrimmingClipId(null);
       setTrimEdge(null);
       setTrimDeltaSec(null);
@@ -714,12 +737,14 @@ export const Timeline: React.FC<TimelineProps> = ({
         cancelAnimationFrame(rafTrimRef.current);
         rafTrimRef.current = null;
       }
-      window.removeEventListener('mousemove', handleTrimMove);
-      window.removeEventListener('mouseup', handleTrimEnd);
+      window.removeEventListener('pointermove', handleTrimMove);
+      window.removeEventListener('pointerup', handleTrimEnd);
+      window.removeEventListener('pointercancel', handleTrimEnd);
     };
 
-    window.addEventListener('mousemove', handleTrimMove);
-    window.addEventListener('mouseup', handleTrimEnd);
+    window.addEventListener('pointermove', handleTrimMove);
+    window.addEventListener('pointerup', handleTrimEnd);
+    window.addEventListener('pointercancel', handleTrimEnd);
   };
 
   // Universal Item Drag Engine for Clips, Overlays, SFX, and Captions
@@ -743,6 +768,10 @@ export const Timeline: React.FC<TimelineProps> = ({
 
     e.stopPropagation();
     hasMovedRef.current = false;
+    const currentTarget = e.currentTarget as HTMLElement;
+    try {
+      currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
 
     // Immediately select target item
     if (type === 'clip') {
@@ -856,6 +885,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     };
 
     const handlePointerUp = () => {
+      try {
+        currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
       if (type === 'caption' && setWords && setCaptions) {
         setCaptions((curr) => {
           setWords(flattenCaptionsToWords(curr));
@@ -890,6 +922,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     const ov = overlays.find((o) => o.id === overlayId);
     if (!ov) return;
 
+    const currentTarget = e.currentTarget as HTMLElement;
+    try {
+      currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
     const startX = e.clientX;
     const initialStart = ov.startTimelineTime;
     const initialDuration = ov.duration;
@@ -913,6 +950,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     };
 
     const handleUp = () => {
+      try {
+        currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
@@ -934,6 +974,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     if (isSfxLocked) return;
     const sfx = sfxTracks.find((s) => s.id === sfxId);
     if (!sfx) return;
+
+    const currentTarget = e.currentTarget as HTMLElement;
+    try {
+      currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
 
     const startX = e.clientX;
     const initialStart = sfx.startTimelineTime;
@@ -958,6 +1003,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     };
 
     const handleUp = () => {
+      try {
+        currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
@@ -979,6 +1027,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     if (isCaptionLocked || !setCaptions) return;
     const targetCaption = (captions || []).find((c) => c.id === captionId);
     if (!targetCaption) return;
+
+    const currentTarget = e.currentTarget as HTMLElement;
+    try {
+      currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
 
     const startX = e.clientX;
     const initialStart = targetCaption.startTime;
@@ -1003,6 +1056,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     };
 
     const handleUp = () => {
+      try {
+        currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
@@ -1149,6 +1205,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         onAddPunchZoom={onAddPunchZoom}
         onOpenDiagnostics={onOpenDiagnostics}
         diagnosticSettings={diagnosticSettings}
+        onPurgeOverlaysAndSfx={onPurgeOverlaysAndSfx}
       />
 
       {/* 2. TIMELINE MINIMAP NAVIGATOR */}
@@ -1420,7 +1477,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* ========================================================= */}
           <div
             className={`relative h-14 border-b border-slate-800/80 flex items-center bg-slate-950/40 transition-opacity ${
-              !isOverlayVisible ? 'opacity-30' : 'opacity-100'
+              !effectiveOverlayVisible ? 'opacity-30' : 'opacity-100'
             }`}
           >
             <TimelineTrackHeader
@@ -1430,8 +1487,14 @@ export const Timeline: React.FC<TimelineProps> = ({
               badge="V2"
               isLocked={isOverlayLocked}
               onToggleLock={() => setIsOverlayLocked((l) => !l)}
-              isVisible={isOverlayVisible}
-              onToggleVisibility={() => setIsOverlayVisible((v) => !v)}
+              isVisible={effectiveOverlayVisible}
+              onToggleVisibility={() => {
+                if (onToggleMasterOverlay) {
+                  onToggleMasterOverlay();
+                } else {
+                  setIsOverlayVisible((v) => !v);
+                }
+              }}
               itemCount={overlays.length}
             />
 
@@ -1781,7 +1844,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                     {!isVideoLocked && (
                       <div
                         data-trim-handle="true"
-                        onMouseDown={(e) => handleTrimStart(e, clip.id, 'left')}
+                        onPointerDown={(e) => handleTrimStart(e, clip.id, 'left')}
                         title="Drag to trim Start (IN)"
                         className="absolute left-0 top-0 bottom-0 w-2.5 bg-indigo-500/30 hover:bg-indigo-500 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-indigo-500/60"
                       >
@@ -1793,7 +1856,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                     {!isVideoLocked && (
                       <div
                         data-trim-handle="true"
-                        onMouseDown={(e) => handleTrimStart(e, clip.id, 'right')}
+                        onPointerDown={(e) => handleTrimStart(e, clip.id, 'right')}
                         title="Drag to trim End (OUT)"
                         className="absolute right-0 top-0 bottom-0 w-2.5 bg-indigo-500/30 hover:bg-indigo-500 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-indigo-500/60"
                       >
@@ -1835,15 +1898,19 @@ export const Timeline: React.FC<TimelineProps> = ({
                 const leftPx = clip.startTimelineTime * pixelsPerSecond;
                 const widthPx = clip.duration * pixelsPerSecond;
                 const numBars = Math.max(16, Math.floor(widthPx / 3.5));
-
-                const slicedWaveform = extractClipWaveformSegment(
-                  clip.audioBuffer,
-                  clip.waveform,
-                  clip.inPoint,
-                  clip.outPoint,
-                  clip.originalDuration,
-                  numBars
-                );
+                const cacheKey = `${clip.id}_${clip.inPoint}_${clip.outPoint}_${clip.originalDuration}_${numBars}`;
+                let slicedWaveform = waveformCacheRef.current.get(cacheKey);
+                if (!slicedWaveform) {
+                  slicedWaveform = extractClipWaveformSegment(
+                    clip.audioBuffer,
+                    clip.waveform,
+                    clip.inPoint,
+                    clip.outPoint,
+                    clip.originalDuration,
+                    numBars
+                  );
+                  waveformCacheRef.current.set(cacheKey, slicedWaveform);
+                }
 
                 const isPlayheadInside =
                   currentTime >= clip.startTimelineTime &&
@@ -1975,7 +2042,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* ========================================================= */}
           <div
             className={`relative h-16 border-b border-slate-800 flex items-center bg-slate-900/10 transition-opacity ${
-              isSfxMuted ? 'opacity-30' : 'opacity-100'
+              effectiveSfxMuted ? 'opacity-30' : 'opacity-100'
             }`}
           >
             <TimelineTrackHeader
@@ -1985,8 +2052,14 @@ export const Timeline: React.FC<TimelineProps> = ({
               badge="A2"
               isLocked={isSfxLocked}
               onToggleLock={() => setIsSfxLocked((l) => !l)}
-              isMuted={isSfxMuted}
-              onToggleMute={() => setIsSfxMuted((m) => !m)}
+              isMuted={effectiveSfxMuted}
+              onToggleMute={() => {
+                if (onToggleMasterSfx) {
+                  onToggleMasterSfx();
+                } else {
+                  setIsSfxMuted((m) => !m);
+                }
+              }}
               onQuickAdd={handleAddSfxAtPlayhead}
               quickAddTitle="Add SFX at current playhead"
               itemCount={sfxTracks.length}
@@ -2167,18 +2240,16 @@ export const Timeline: React.FC<TimelineProps> = ({
             }}
             className="absolute top-0 bottom-0 left-0 z-50 pointer-events-none"
           >
-            {/* Extended Vertical Needle Hit Zone (Full Timeline Height) */}
+            {/* Extended Vertical Needle Line (Non-blocking so underlying items can be clicked & dragged) */}
             <div
-              onPointerDown={handlePlayheadPointerDown}
-              className="absolute top-0 bottom-0 -left-2.5 w-5 cursor-ew-resize pointer-events-auto group/needle flex justify-center"
-              title="Drag playhead line"
+              className="absolute top-0 bottom-0 -left-2.5 w-5 pointer-events-none group/needle flex justify-center"
             >
               {/* Vertical Red Needle Line with Halo */}
               <div
                 className={`w-0.5 h-full transition-all ${
                   isScrubbingPlayhead
                     ? 'bg-red-400 shadow-[0_0_12px_rgba(239,68,68,1)]'
-                    : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.85)] group-hover/needle:bg-red-400 group-hover/needle:shadow-[0_0_12px_rgba(239,68,68,1)]'
+                    : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.85)]'
                 }`}
               />
             </div>

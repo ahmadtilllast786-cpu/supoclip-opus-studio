@@ -34,7 +34,7 @@ import { executeAutoViralEdit } from './core/ai/autoEditor';
 import { generateDemoVideoClip } from './core/video/demoMediaGenerator';
 import { SUPOCLIP_CAPTION_TEMPLATES } from './core/captions/supoClipTemplates';
 import { generateViralMoments, generateAdaptiveTranscript } from './core/ai/viralityScorer';
-import { autoTranscribeVideoAudio } from './core/ai/captionTranscriber';
+import { autoTranscribeVideoAudio, transcribeContinuousAudio } from './core/ai/captionTranscriber';
 import { decodeAudioBuffer, generateWaveformPeaks } from './core/audio/audioAnalyzer';
 import { groupWordsIntoCaptionChunks } from './core/captions/captionHandler';
 
@@ -53,7 +53,7 @@ export function App() {
   const [words, setWords] = useState<TranscriptWord[]>([]);
   const [captions, setCaptions] = useState<CaptionTrackItem[]>([]);
   const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
-  const [detectedLanguage, setDetectedLanguage] = useState<string>('en');
+  const [detectedLanguage, setDetectedLanguage] = useState<string>('auto');
   const [detectedConfidence, setDetectedConfidence] = useState<number>(0.96);
 
   const [viralMoments, setViralMoments] = useState<ViralClipSegment[]>([]);
@@ -142,13 +142,21 @@ export function App() {
             audioBuf = ctx.createBuffer(1, Math.max(1, Math.round(demoClip.duration * 44100)), 44100);
           }
 
-          const demoWords = await autoTranscribeVideoAudio(audioBuf);
+          const demoResult = await transcribeContinuousAudio(audioBuf, undefined, 'auto');
           if (isMounted) {
-            setWords(demoWords);
-            const chunks = groupWordsIntoCaptionChunks(demoWords, { detectedLanguage: 'en' });
+            setWords(demoResult.words);
+            if (demoResult.detectedLanguage && demoResult.detectedLanguage !== 'auto') {
+              setDetectedLanguage(demoResult.detectedLanguage);
+            }
+            if (demoResult.confidence) {
+              setDetectedConfidence(demoResult.confidence);
+            }
+            const chunks = groupWordsIntoCaptionChunks(demoResult.words, {
+              detectedLanguage: demoResult.detectedLanguage || 'auto',
+            });
             setCaptions(chunks);
             setShowCaptions(true);
-            const moments = generateViralMoments([demoClip], 30, demoWords);
+            const moments = generateViralMoments([demoClip], 30, demoResult.words);
             setViralMoments(moments);
             if (moments.length > 0) {
               setActiveMomentId(moments[0].id);
@@ -213,7 +221,14 @@ export function App() {
         buffer = ctx.createBuffer(1, Math.max(1, Math.round((newClip.duration || 5) * 44100)), 44100);
       }
 
-      const generatedWords = await autoTranscribeVideoAudio(buffer);
+      const result = await transcribeContinuousAudio(buffer, undefined, detectedLanguage);
+      if (result.detectedLanguage && result.detectedLanguage !== 'auto') {
+        setDetectedLanguage(result.detectedLanguage);
+      }
+      if (result.confidence) {
+        setDetectedConfidence(result.confidence);
+      }
+      const generatedWords = result.words;
       if (generatedWords.length > 0) {
         setShowCaptions(true);
         setWords((prevWords) => {
@@ -230,7 +245,9 @@ export function App() {
             ? [...prevWords, ...adjustedWords].sort((a, b) => a.start - b.start)
             : adjustedWords;
 
-          const chunks = groupWordsIntoCaptionChunks(combined, { detectedLanguage });
+          const chunks = groupWordsIntoCaptionChunks(combined, {
+            detectedLanguage: result.detectedLanguage || detectedLanguage || 'auto',
+          });
           setCaptions(chunks);
 
           setClips((currentClips) => {
@@ -265,6 +282,14 @@ export function App() {
   // Update Overlay Scale
   const handleUpdateOverlayScale = useCallback((id: string, scale: number) => {
     setOverlays((prev) => prev.map((ov) => (ov.id === id ? { ...ov, scale } : ov)));
+  }, []);
+
+  // 1-Click Purge all Overlays & SFX clutter
+  const handlePurgeOverlaysAndSfx = useCallback(() => {
+    setOverlays([]);
+    setSfxTracks([]);
+    setSelectedOverlayId(null);
+    setSelectedSfxId(null);
   }, []);
 
   // 1-Click Punch Zoom at playhead
@@ -639,6 +664,21 @@ export function App() {
         onAddPunchZoom={handleAddPunchZoom}
         onOpenDiagnostics={() => setIsDiagnosticModalOpen(true)}
         diagnosticSettings={diagnosticSettings}
+        onPurgeOverlaysAndSfx={handlePurgeOverlaysAndSfx}
+        masterOverlayVisible={diagnosticSettings.masterOverlayVisible}
+        onToggleMasterOverlay={() =>
+          setDiagnosticSettings((prev) => ({
+            ...prev,
+            masterOverlayVisible: !prev.masterOverlayVisible,
+          }))
+        }
+        masterSfxMuted={diagnosticSettings.masterSfxMuted}
+        onToggleMasterSfx={() =>
+          setDiagnosticSettings((prev) => ({
+            ...prev,
+            masterSfxMuted: !prev.masterSfxMuted,
+          }))
+        }
       />
 
       {/* Lossless / High-Bitrate Export Modal */}

@@ -52,6 +52,7 @@ interface TimelineToolbarProps {
   onAddPunchZoom: () => void;
   onOpenDiagnostics?: () => void;
   diagnosticSettings?: DiagnosticSettings;
+  onPurgeOverlaysAndSfx?: () => void;
 }
 
 export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
@@ -81,6 +82,7 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
   onAddPunchZoom,
   onOpenDiagnostics,
   diagnosticSettings,
+  onPurgeOverlaysAndSfx,
 }) => {
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
@@ -282,6 +284,18 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
               (!diagnosticSettings.masterOverlayVisible || diagnosticSettings.masterSfxMuted) && (
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
               )}
+          </button>
+        )}
+
+        {/* Purge Clutter Button */}
+        {onPurgeOverlaysAndSfx && (
+          <button
+            onClick={onPurgeOverlaysAndSfx}
+            title="Purge all sticker overlays and SFX nodes from timeline"
+            className="flex items-center gap-1.5 px-2 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white rounded-md border border-rose-800/50 transition-colors shadow-sm text-xs font-semibold"
+          >
+            <Trash2 className="w-3 h-3 text-rose-400" />
+            <span className="hidden xl:inline">Purge Clutter</span>
           </button>
         )}
       </div>

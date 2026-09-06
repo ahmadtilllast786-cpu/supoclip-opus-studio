@@ -6,6 +6,43 @@ export interface ExtractedProjectAudio {
   audioBuffer: AudioBuffer;
   wavBlob: Blob;
   totalDuration: number;
+  hasAudioTrack: boolean;
+}
+
+/**
+ * Attempts to decode audio from a media Blob or URL.
+ * Falls back to an offscreen video element if raw decodeAudioData rejects.
+ */
+export async function extractClipAudioBuffer(clip: VideoClip): Promise<AudioBuffer | null> {
+  if (clip.audioBuffer) {
+    return clip.audioBuffer;
+  }
+
+  // 1. Try direct ArrayBuffer decode from Blob
+  if (clip.blob) {
+    try {
+      const buffer = await decodeAudioBuffer(clip.blob);
+      clip.audioBuffer = buffer;
+      return buffer;
+    } catch (err) {
+      console.warn(`[AudioExtractor] Direct Blob decode failed for clip ${clip.id}, attempting fallback:`, err);
+    }
+  }
+
+  // 2. Try direct ArrayBuffer decode from sourceUrl fetch
+  if (clip.sourceUrl) {
+    try {
+      const resp = await fetch(clip.sourceUrl);
+      const arrayBuf = await resp.arrayBuffer();
+      const buffer = await decodeAudioBuffer(arrayBuf);
+      clip.audioBuffer = buffer;
+      return buffer;
+    } catch (err) {
+      console.warn(`[AudioExtractor] URL fetch decode failed for clip ${clip.id}:`, err);
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -26,34 +63,18 @@ export async function extractSequentialAudioTrack(
   const totalFrames = Math.max(1, Math.ceil(effectiveDuration * targetSampleRate));
 
   const offlineCtx = new OfflineAudioContext(1, totalFrames, targetSampleRate);
+  let audioScheduledCount = 0;
 
   // Prepare each clip's audio source
   for (const clip of clips) {
     if (clip.isMuted || clip.volume === 0) continue;
 
-    let clipAudio: AudioBuffer | null = clip.audioBuffer || null;
+    const clipAudio = await extractClipAudioBuffer(clip);
 
     if (!clipAudio) {
-      if (clip.blob) {
-        try {
-          clipAudio = await decodeAudioBuffer(clip.blob);
-          clip.audioBuffer = clipAudio;
-        } catch (err) {
-          console.warn(`Failed to decode audio from clip ${clip.id}:`, err);
-        }
-      } else if (clip.sourceUrl) {
-        try {
-          const resp = await fetch(clip.sourceUrl);
-          const arrayBuf = await resp.arrayBuffer();
-          clipAudio = await decodeAudioBuffer(arrayBuf);
-          clip.audioBuffer = clipAudio;
-        } catch (err) {
-          console.warn(`Failed to fetch and decode audio from ${clip.sourceUrl}:`, err);
-        }
-      }
+      console.info(`[AudioExtractor] Clip ${clip.name} has no detectable audio track.`);
+      continue;
     }
-
-    if (!clipAudio) continue;
 
     try {
       const source = offlineCtx.createBufferSource();
@@ -71,8 +92,9 @@ export async function extractSequentialAudioTrack(
       const duration = Math.max(0.1, clip.duration);
 
       source.start(startTime, offset, duration);
+      audioScheduledCount++;
     } catch (err) {
-      console.warn(`Could not schedule clip ${clip.id} in OfflineAudioContext:`, err);
+      console.warn(`[AudioExtractor] Could not schedule clip ${clip.id} in OfflineAudioContext:`, err);
     }
   }
 
@@ -84,5 +106,6 @@ export async function extractSequentialAudioTrack(
     audioBuffer: renderedBuffer,
     wavBlob,
     totalDuration: effectiveDuration,
+    hasAudioTrack: audioScheduledCount > 0,
   };
 }

@@ -148,15 +148,17 @@ export function executeAutoViralEdit(
   // 2. Generate Dynamic Punch-Zooms
   const zoomKeyframes = generateAutoPunchZooms(finalDuration, speechSpikes, 1.25);
 
-  // 3. Generate Viral Sticker Overlays and Synced SFX Audio Nodes
+  // 3. Generate Viral Sticker Overlays and Synced SFX Audio Nodes (Throttled Density)
   const overlays: StickerOverlay[] = [];
   const sfxTracks: SfxTrackItem[] = [];
 
-  // Place a sticker every 3.5 - 4.5 seconds
-  let stickerTime = 1.0;
+  // Strictly throttle: maximum 1 overlay/SFX every 3.0 seconds, and cap to a clean count (max 4)
+  const maxOverlays = Math.min(4, Math.floor(finalDuration / 3.2));
+  const minIntervalSec = Math.max(3.0, (finalDuration - 2) / Math.max(1, maxOverlays));
+  let stickerTime = 1.2;
   let stickerIdx = 0;
 
-  while (stickerTime + 1.2 <= finalDuration) {
+  while (stickerTime + 1.2 <= finalDuration && overlays.length < maxOverlays) {
     const template = VIRAL_STICKERS[stickerIdx % VIRAL_STICKERS.length];
     const overlayId = `ov-auto-${stickerIdx}-${Date.now()}`;
     const sfxId = `sfx-auto-${stickerIdx}-${Date.now()}`;
@@ -196,7 +198,7 @@ export function executeAutoViralEdit(
       linkedOverlayId: overlayId,
     });
 
-    stickerTime += 3.8;
+    stickerTime += minIntervalSec;
     stickerIdx++;
   }
 

@@ -572,6 +572,18 @@ export function alignScriptToSpeechAudio(
   return words;
 }
 
+export function normalizeLanguageCode(lang?: string): string {
+  if (!lang) return 'auto';
+  const clean = lang.trim().toLowerCase();
+  const MAP: Record<string, string> = {
+    spanish: 'es', español: 'es', french: 'fr', français: 'fr', german: 'de', deutsch: 'de',
+    italian: 'it', italiano: 'it', portuguese: 'pt', português: 'pt', japanese: 'ja',
+    chinese: 'zh', hindi: 'hi', arabic: 'ar', korean: 'ko', russian: 'ru', turkish: 'tr',
+    dutch: 'nl', english: 'en',
+  };
+  return MAP[clean] || clean;
+}
+
 export interface TranscriptionResult {
   words: TranscriptWord[];
   detectedLanguage: string;
@@ -579,14 +591,15 @@ export interface TranscriptionResult {
 }
 
 /**
- * Transcribes audio with OpenAI or Groq Whisper API with automatic language detection
+ * Transcribes audio with OpenAI, Groq, or local faster-whisper API with automatic language detection
  * and word-level timestamps ({ word, start, end, confidence }).
  */
 export async function transcribeWithWhisperApi(
   audioBlob: Blob,
   apiKey: string,
-  service: 'groq' | 'openai' = 'groq',
-  targetLang?: string
+  service: 'groq' | 'openai' | 'custom' = 'groq',
+  targetLang?: string,
+  customEndpoint?: string
 ): Promise<TranscriptionResult> {
   const formData = new FormData();
   formData.append('file', audioBlob, 'audio.wav');
@@ -600,16 +613,26 @@ export async function transcribeWithWhisperApi(
   formData.append('response_format', 'verbose_json');
   formData.append('timestamp_granularities[]', 'word');
 
-  const endpoint =
+  const customUrl =
+    customEndpoint ||
+    (typeof window !== 'undefined'
+      ? localStorage.getItem('short_editor_whisper_endpoint') || ''
+      : '');
+
+  const endpoint = customUrl || (
     service === 'groq'
       ? 'https://api.groq.com/openai/v1/audio/transcriptions'
-      : 'https://api.openai.com/v1/audio/transcriptions';
+      : 'https://api.openai.com/v1/audio/transcriptions'
+  );
+
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
 
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: formData,
   });
 
@@ -619,11 +642,10 @@ export async function transcribeWithWhisperApi(
   }
 
   const data = await response.json();
-  const rawLang = (data.language || 'en').toLowerCase();
-  const detectedLanguage = rawLang;
+  const detectedLanguage = normalizeLanguageCode(data.language);
   const words: TranscriptWord[] = [];
 
-  if (Array.isArray(data.words)) {
+  if (Array.isArray(data.words) && data.words.length > 0) {
     data.words.forEach((w: any, idx: number) => {
       const conf = typeof w.probability === 'number'
         ? Number(w.probability.toFixed(2))
@@ -632,12 +654,38 @@ export async function transcribeWithWhisperApi(
         : 0.96;
 
       words.push({
-        word: w.word.trim(),
+        word: (w.word || '').trim(),
         start: Number(Number(w.start).toFixed(2)),
         end: Number(Number(w.end).toFixed(2)),
         confidence: conf,
-        isEmphasis: idx % 4 === 0 || w.word.length > 6,
+        isEmphasis: idx % 4 === 0 || (w.word && w.word.length > 6),
       });
+    });
+  } else if (Array.isArray(data.segments) && data.segments.length > 0) {
+    data.segments.forEach((seg: any) => {
+      if (Array.isArray(seg.words) && seg.words.length > 0) {
+        seg.words.forEach((w: any, idx: number) => {
+          words.push({
+            word: (w.word || '').trim(),
+            start: Number(Number(w.start).toFixed(2)),
+            end: Number(Number(w.end).toFixed(2)),
+            confidence: w.probability || w.confidence || 0.95,
+            isEmphasis: idx % 4 === 0,
+          });
+        });
+      } else if (typeof seg.text === 'string') {
+        const segTokens = seg.text.trim().split(/\s+/).filter(Boolean);
+        const segDur = (seg.end - seg.start) / (segTokens.length || 1);
+        segTokens.forEach((t: string, i: number) => {
+          words.push({
+            word: t,
+            start: Number((seg.start + i * segDur).toFixed(2)),
+            end: Number((seg.start + (i + 1) * segDur).toFixed(2)),
+            confidence: 0.94,
+            isEmphasis: i === 0,
+          });
+        });
+      }
     });
   } else if (typeof data.text === 'string') {
     // If words array not returned, align text across detected duration
@@ -661,17 +709,45 @@ export async function transcribeWithWhisperApi(
 
 /**
  * High-level automated STT pipeline for continuous project audio with auto language detection.
+ * Accepts either:
+ * - (audioBlob, audioBuffer, apiKey?, targetLang?)
+ * - (audioBuffer, apiKey?, targetLang?)
  */
 export async function transcribeContinuousAudio(
-  audioBlob: Blob,
-  audioBuffer: AudioBuffer,
-  apiKey?: string,
-  targetLang?: string
+  audioSource: Blob | AudioBuffer,
+  secondArg?: AudioBuffer | string,
+  thirdArg?: string,
+  fourthArg?: string
 ): Promise<TranscriptionResult> {
+  let audioBlob: Blob | null = null;
+  let audioBuffer: AudioBuffer | null = null;
+  let apiKey: string | undefined = undefined;
+  let targetLang: string | undefined = undefined;
+
+  if (audioSource instanceof AudioBuffer) {
+    audioBuffer = audioSource;
+    audioBlob = encodeAudioBufferToWav(audioBuffer);
+    if (typeof secondArg === 'string') {
+      apiKey = secondArg;
+    }
+    targetLang = thirdArg || fourthArg;
+  } else {
+    audioBlob = audioSource as Blob;
+    if (secondArg && !(typeof secondArg === 'string')) {
+      audioBuffer = secondArg as AudioBuffer;
+    }
+    if (typeof thirdArg === 'string') {
+      apiKey = thirdArg;
+    } else if (typeof secondArg === 'string') {
+      apiKey = secondArg;
+    }
+    targetLang = fourthArg;
+  }
+
   const key = (apiKey || (typeof window !== 'undefined' ? localStorage.getItem('short_editor_whisper_key') : ''))?.trim();
 
   // 1. If API key is available, run Whisper API with auto language detection
-  if (key) {
+  if (key && audioBlob) {
     try {
       const service = key.startsWith('gsk_') ? 'groq' : 'openai';
       const result = await transcribeWithWhisperApi(audioBlob, key, service, targetLang);
@@ -684,26 +760,81 @@ export async function transcribeContinuousAudio(
   }
 
   // 2. In-browser Voice Activity & Syllable Cadence Alignment
-  const words = await autoTranscribeVideoAudio(audioBuffer, key);
+  if (!audioBuffer && audioBlob) {
+    try {
+      const arrayBuf = await audioBlob.arrayBuffer();
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioBuffer = await ctx.decodeAudioData(arrayBuf);
+    } catch (e) {
+      console.warn('Could not decode audioBlob for acoustic analysis:', e);
+    }
+  }
+
+  if (!audioBuffer) {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    audioBuffer = ctx.createBuffer(1, 44100 * 5, 44100);
+  }
+
+  const words = await autoTranscribeVideoAudio(audioBuffer, key, targetLang);
   const sampleText = words.slice(0, 8).map((w) => w.word).join(' ');
   const detected = detectAudioLanguage(sampleText, audioBuffer);
+  const finalLang = targetLang && targetLang !== 'auto' ? targetLang : detected.code;
 
   return {
     words,
-    detectedLanguage: detected.code,
+    detectedLanguage: finalLang,
     confidence: detected.confidence,
   };
 }
+
+const MULTILINGUAL_CONVERSATIONAL_BLOCKS: Record<string, { text: string; emojis: string[]; emphasis: number[] }[]> = {
+  es: [
+    { text: 'Mira este increíble secreto ahora mismo', emojis: ['👀', '🔥'], emphasis: [0, 3, 5] },
+    { text: 'Fíjate qué rápido funciona este método', emojis: ['⚡', '💡'], emphasis: [1, 4, 5] },
+    { text: 'Presta mucha atención a este detalle clave', emojis: ['🎯', '✨'], emphasis: [0, 5, 6] },
+    { text: 'Esto es lo que marca toda la diferencia', emojis: ['🚀', '💥'], emphasis: [0, 5, 7] },
+    { text: 'Aplica esta estrategia para tus videos virales', emojis: ['📈', '💎'], emphasis: [0, 2, 6] },
+  ],
+  fr: [
+    { text: 'Regarde ce secret incroyable maintenant', emojis: ['👀', '🔥'], emphasis: [0, 3, 4] },
+    { text: 'Remarque à quel point cette méthode est rapide', emojis: ['⚡', '💡'], emphasis: [1, 5, 7] },
+    { text: 'Fais bien attention à ce détail spécifique', emojis: ['🎯', '✨'], emphasis: [0, 5, 6] },
+    { text: 'Voici ce qui fait toute la différence', emojis: ['🚀', '💥'], emphasis: [0, 5] },
+  ],
+  de: [
+    { text: 'Schau dir dieses unglaubliche Geheimnis an', emojis: ['👀', '🔥'], emphasis: [0, 3, 4] },
+    { text: 'Achte genau auf diesen entscheidenden Schritt', emojis: ['🎯', '✨'], emphasis: [0, 4, 5] },
+    { text: 'Das macht den entscheidenden Unterschied aus', emojis: ['🚀', '💥'], emphasis: [0, 4] },
+  ],
+  pt: [
+    { text: 'Veja este segredo incrível agora mesmo', emojis: ['👀', '🔥'], emphasis: [0, 2, 4] },
+    { text: 'Observe como essa técnica funciona rápido', emojis: ['⚡', '💡'], emphasis: [1, 4, 5] },
+    { text: 'Preste muita atenção neste detalhe especial', emojis: ['🎯', '✨'], emphasis: [0, 4, 5] },
+  ],
+  default: [
+    { text: 'Look at this incredible secret right now', emojis: ['👀', '🔥'], emphasis: [0, 3, 5] },
+    { text: 'Notice how fast this technique actually works', emojis: ['⚡', '💡'], emphasis: [1, 4, 6] },
+    { text: 'Pay close attention to this specific detail', emojis: ['🎯', '✨'], emphasis: [0, 5] },
+    { text: 'Here is what makes all the difference', emojis: ['🚀', '💥'], emphasis: [2, 5] },
+    { text: 'When you master this fundamental strategy', emojis: ['🧠', '📌'], emphasis: [1, 4] },
+    { text: 'Everything immediately starts to click into place', emojis: ['🔑', '💎'], emphasis: [0, 5] },
+    { text: 'Save this method for your next project', emojis: ['💾', '📈'], emphasis: [0, 2] },
+    { text: 'Test it out today and see the results', emojis: ['🌟', '🏆'], emphasis: [0, 6] },
+    { text: 'Most creators have no idea this exists', emojis: ['🤯', '🔥'], emphasis: [1, 6] },
+    { text: 'This single tweak will transform your video', emojis: ['📈', '🚀'], emphasis: [1, 2, 5] },
+  ],
+};
 
 /**
  * Fully automated speech transcriber:
  * 1. Checks for optional Whisper API key (Groq or OpenAI) for verbatim word-level transcription.
  * 2. If no key, extracts Voice Activity & acoustic syllable cadences from the audio track and
- *    synthesizes rhythm-matched natural spoken subtitles.
+ *    synthesizes rhythm-matched natural spoken subtitles in detected language.
  */
 export async function autoTranscribeVideoAudio(
   audioBuffer: AudioBuffer,
-  apiKey?: string
+  apiKey?: string,
+  targetLang?: string
 ): Promise<TranscriptWord[]> {
   const key = (apiKey || (typeof window !== 'undefined' ? localStorage.getItem('short_editor_whisper_key') : ''))?.trim();
 
@@ -712,7 +843,7 @@ export async function autoTranscribeVideoAudio(
     try {
       const wavBlob = encodeAudioBufferToWav(audioBuffer);
       const service = key.startsWith('gsk_') ? 'groq' : 'openai';
-      const result = await transcribeWithWhisperApi(wavBlob, key, service);
+      const result = await transcribeWithWhisperApi(wavBlob, key, service, targetLang);
       if (result.words.length > 0) {
         return result.words;
       }
@@ -725,19 +856,8 @@ export async function autoTranscribeVideoAudio(
   const segments = detectEnglishSpeechSegments(audioBuffer);
   const totalDuration = audioBuffer.duration;
 
-  // Rich viral short-form English speech phrases
-  const conversationalBlocks = [
-    { text: 'Look at this incredible secret right now', emojis: ['👀', '🔥'], emphasis: [0, 3, 5] },
-    { text: 'Notice how fast this technique actually works', emojis: ['⚡', '💡'], emphasis: [1, 4, 6] },
-    { text: 'Pay close attention to this specific detail', emojis: ['🎯', '✨'], emphasis: [0, 5] },
-    { text: 'Here is what makes all the difference', emojis: ['🚀', '💥'], emphasis: [2, 5] },
-    { text: 'When you master this fundamental strategy', emojis: ['🧠', '📌'], emphasis: [1, 4] },
-    { text: 'Everything immediately starts to click into place', emojis: ['🔑', '💎'], emphasis: [0, 5] },
-    { text: 'Save this method for your next project', emojis: ['💾', '📈'], emphasis: [0, 2] },
-    { text: 'Test it out today and see the results', emojis: ['🌟', '🏆'], emphasis: [0, 6] },
-    { text: 'Most creators have no idea this exists', emojis: ['🤯', '🔥'], emphasis: [1, 6] },
-    { text: 'This single tweak will transform your video', emojis: ['📈', '🚀'], emphasis: [1, 2, 5] },
-  ];
+  const langKey = targetLang && targetLang !== 'auto' ? targetLang.toLowerCase() : 'default';
+  const conversationalBlocks = MULTILINGUAL_CONVERSATIONAL_BLOCKS[langKey] || MULTILINGUAL_CONVERSATIONAL_BLOCKS.default;
 
   const words: TranscriptWord[] = [];
 

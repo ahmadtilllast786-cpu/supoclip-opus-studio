@@ -21,7 +21,7 @@ export function groupWordsIntoCaptionChunks(
   const maxWords = options.maxWordsPerChunk || 3;
   const maxDur = options.maxDurationSec || 2.4;
   const pauseThreshold = options.pauseThresholdSec || 0.35;
-  const detectedLanguage = options.detectedLanguage || 'en';
+  const detectedLanguage = options.detectedLanguage || 'auto';
 
   const chunks: CaptionTrackItem[] = [];
   let currentWords: TranscriptWord[] = [];

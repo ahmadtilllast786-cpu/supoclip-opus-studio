@@ -40,22 +40,37 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
     return;
   }
 
-  // Find active word index
+  // Find active word index matching current playhead timestamp
   let targetIdx = words.findIndex(
     (w) => currentTime >= w.start && currentTime <= w.end
   );
 
-  // If no word is strictly active at currentTime, locate closest word chunk
-  // so the user can easily position, drag, and preview captions at any timestamp
+  // If no word is strictly active at currentTime:
+  // Check if we are within the small pause between words in the same phrase
   if (targetIdx === -1) {
-    if (currentTime < words[0].start) {
-      targetIdx = 0;
-    } else if (currentTime > words[words.length - 1].end) {
-      targetIdx = words.length - 1;
-    } else {
-      const nextIdx = words.findIndex((w) => currentTime < w.start);
-      targetIdx = nextIdx > 0 ? nextIdx - 1 : 0;
+    const nearbyIdx = words.findIndex((w, i) => {
+      if (currentTime >= w.start - 0.12 && currentTime <= w.end + 0.20) {
+        return true;
+      }
+      const next = words[i + 1];
+      if (next && currentTime > w.end && currentTime < next.start && next.start - w.end <= 0.65) {
+        return true;
+      }
+      return false;
+    });
+    if (nearbyIdx !== -1) {
+      targetIdx = nearbyIdx;
     }
+  }
+
+  // If still not active and far from speech (e.g. silence gaps > 0.4s, or before/after speech),
+  // hide captions dynamically to prevent cluttering the canvas
+  if (targetIdx === -1) {
+    if (currentTime < words[0].start - 0.4 || currentTime > words[words.length - 1].end + 0.4) {
+      lastSubtitleBounds = null;
+      return;
+    }
+    targetIdx = currentTime < words[0].start ? 0 : words.length - 1;
   }
 
   // Group into line chunks according to template.max_words_per_line

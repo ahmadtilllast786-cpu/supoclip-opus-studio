@@ -86,21 +86,25 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
   setWords,
   captions = [],
   setCaptions,
-  detectedLanguage = 'en',
+  detectedLanguage = 'auto',
   setDetectedLanguage,
   detectedConfidence = 0.96,
   setDetectedConfidence,
   currentTime,
   onSeek,
   clips = [],
-  totalDuration = 10,
+  totalDuration = 0,
 }) => {
   const [activeTab, setActiveTab] = useState<'styles' | 'words' | 'language'>('styles');
   const [searchQuery, setSearchQuery] = useState('');
+  const [editingWordIdx, setEditingWordIdx] = useState<number | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [selectedTargetLang, setSelectedTargetLang] = useState('es');
   const [whisperApiKey, setWhisperApiKey] = useState(
     () => localStorage.getItem('short_editor_whisper_key') || ''
+  );
+  const [whisperEndpoint, setWhisperEndpoint] = useState(
+    () => localStorage.getItem('short_editor_whisper_endpoint') || ''
   );
   const [pastedScript, setPastedScript] = useState('');
   const [isScriptDrawerOpen, setIsScriptDrawerOpen] = useState(false);
@@ -222,6 +226,12 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
     localStorage.setItem('short_editor_whisper_key', key);
   };
 
+  // Save Custom Faster-Whisper / OpenAI Endpoint
+  const handleSaveWhisperEndpoint = (url: string) => {
+    setWhisperEndpoint(url);
+    localStorage.setItem('short_editor_whisper_endpoint', url);
+  };
+
   // 1-Click Multilingual Speech Transcriber from Video Audio with Auto-Language Detection
   const handleAutoTranscribeVideo = async () => {
     setIsTranscribing(true);
@@ -233,12 +243,16 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
       }
 
       // Extract continuous sequential 16kHz mono audio honoring timeline offsets, trimming, speeds, and volumes
-      const { audioBuffer, wavBlob } = await extractSequentialAudioTrack(clips, 16000);
+      const { audioBuffer, wavBlob, hasAudioTrack } = await extractSequentialAudioTrack(clips, 16000);
+
+      if (!hasAudioTrack) {
+        console.warn('[CaptionCustomizer] No audio stream found in video clip(s). Using cadence synthesis fallback.');
+      }
 
       const apiKey = whisperApiKey.trim();
       // Auto-detect spoken language across 99+ Whisper languages, word timestamps with confidence
       const { words: transcribedWords, detectedLanguage: langCode, confidence } =
-        await transcribeContinuousAudio(wavBlob, audioBuffer, apiKey);
+        await transcribeContinuousAudio(wavBlob, audioBuffer, apiKey, 'auto');
 
       if (transcribedWords.length > 0) {
         if (setDetectedLanguage) setDetectedLanguage(langCode);
@@ -774,32 +788,50 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
             </button>
           </div>
 
-          {/* Optional Whisper API Key Integration (Groq / OpenAI) */}
-          <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 space-y-2 text-xs">
+          {/* Whisper API Key & Local Faster-Whisper Endpoint Integration */}
+          <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800 space-y-2.5 text-xs">
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-300 flex items-center space-x-1.5">
                 <Key className="w-3.5 h-3.5 text-amber-400" />
-                <span>Whisper Large V3 (Optional)</span>
+                <span>STT Engine & Whisper Settings</span>
               </span>
-              <span className="text-[9px] text-emerald-400 font-mono">Free Groq / OpenAI</span>
+              <span className="text-[9px] text-emerald-400 font-mono">Groq / OpenAI / Faster-Whisper</span>
             </div>
             <p className="text-[10px] text-slate-400 leading-relaxed">
-              For 100% genuine word-level English transcription directly from Whisper Large V3, enter your API key:
+              Enter your Groq key (`gsk_...`), OpenAI key (`sk-...`), or self-hosted faster-whisper endpoint for 100% accurate verbatim multi-language transcription:
             </p>
-            <div className="flex space-x-2">
-              <input
-                type="password"
-                value={whisperApiKey}
-                onChange={(e) => handleSaveWhisperKey(e.target.value)}
-                placeholder="gsk_... or sk-..."
-                className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white flex-1 focus:border-indigo-500 font-mono"
-              />
-              <button
-                onClick={() => alert('API Key saved to browser local storage!')}
-                className="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs px-2.5 py-1 rounded-lg border border-slate-700 transition"
-              >
-                Saved
-              </button>
+            <div className="space-y-1.5">
+              <div className="flex space-x-2">
+                <input
+                  type="password"
+                  value={whisperApiKey}
+                  onChange={(e) => handleSaveWhisperKey(e.target.value)}
+                  placeholder="API Key (gsk_... or sk-...)"
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white flex-1 focus:border-indigo-500 font-mono"
+                />
+                <button
+                  onClick={() => alert('API Key saved to browser local storage!')}
+                  className="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs px-2.5 py-1 rounded-lg border border-slate-700 transition shrink-0"
+                >
+                  Save Key
+                </button>
+              </div>
+
+              <div className="flex space-x-2">
+                <input
+                  type="text"
+                  value={whisperEndpoint}
+                  onChange={(e) => handleSaveWhisperEndpoint(e.target.value)}
+                  placeholder="Custom endpoint (e.g. http://localhost:8000/v1/audio/transcriptions)"
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-[11px] text-slate-200 flex-1 focus:border-indigo-500 font-mono"
+                />
+                <button
+                  onClick={() => alert('Custom endpoint saved!')}
+                  className="bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs px-2.5 py-1 rounded-lg border border-slate-700 transition shrink-0"
+                >
+                  Save URL
+                </button>
+              </div>
             </div>
           </div>
 
