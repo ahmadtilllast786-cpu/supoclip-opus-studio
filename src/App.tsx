@@ -381,6 +381,10 @@ export function App() {
                 setHookTitle={setHookTitle}
                 showCaptions={showCaptions}
                 setShowCaptions={setShowCaptions}
+                words={words}
+                setWords={setWords}
+                currentTime={currentTime}
+                onSeek={(t) => setCurrentTime(t)}
               />
             )}
             {sidebarTab === 'assets' && (
