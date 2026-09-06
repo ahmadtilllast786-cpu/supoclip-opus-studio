@@ -42,28 +42,9 @@ export function App() {
   const [captionTemplate, setCaptionTemplate] = useState<CaptionTemplate>(
     SUPOCLIP_CAPTION_TEMPLATES.hormozi
   );
-  const [hookTitle, setHookTitle] = useState<string | null>(
-    'THE #1 SECRET NOBODY TELLS YOU'
-  );
+  const [hookTitle, setHookTitle] = useState<string | null>(null);
   const [showCaptions, setShowCaptions] = useState<boolean>(true);
-  const [words, setWords] = useState<TranscriptWord[]>([
-    { word: 'STOP', start: 0.2, end: 0.6, isEmphasis: true, emoji: '🛑' },
-    { word: 'scrolling', start: 0.6, end: 1.0 },
-    { word: 'right', start: 1.0, end: 1.25 },
-    { word: 'now', start: 1.25, end: 1.5, isEmphasis: true },
-    { word: 'because', start: 1.6, end: 1.9 },
-    { word: 'this', start: 1.9, end: 2.1 },
-    { word: 'INSANE', start: 2.1, end: 2.6, isEmphasis: true, emoji: '🔥' },
-    { word: 'strategy', start: 2.6, end: 3.0 },
-    { word: 'will', start: 3.1, end: 3.3 },
-    { word: 'change', start: 3.3, end: 3.6 },
-    { word: 'everything.', start: 3.6, end: 4.1, isEmphasis: true, emoji: '🚀' },
-    { word: 'Watch', start: 4.2, end: 4.6 },
-    { word: 'how', start: 4.6, end: 4.8 },
-    { word: 'fast', start: 4.8, end: 5.1 },
-    { word: 'AI', start: 5.1, end: 5.4, isEmphasis: true },
-    { word: 'edits.', start: 5.4, end: 5.8 },
-  ]);
+  const [words, setWords] = useState<TranscriptWord[]>([]);
 
   const [viralMoments, setViralMoments] = useState<ViralClipSegment[]>([]);
   const [activeMomentId, setActiveMomentId] = useState<string | null>(null);
@@ -146,33 +127,23 @@ export function App() {
   // Total duration of current sequence
   const totalDuration = clips.reduce((acc, c) => Math.max(acc, c.startTimelineTime + c.duration), 0);
 
-  // Add Clip sequentially to timeline and auto-align captions across full duration
+  // Add Clip sequentially to timeline without injecting fake captions
   const handleAddClip = useCallback((newClip: VideoClip) => {
     setClips((prev) => {
       const lastClip = prev[prev.length - 1];
       const startTimelineTime = lastClip ? lastClip.startTimelineTime + lastClip.duration : 0;
       const updated = [...prev, { ...newClip, startTimelineTime }];
 
-      // Adapt captions to match new total sequence duration
-      const totalDur = updated.reduce((sum, c) => sum + c.duration, 0);
-      setWords((prevWords) => {
-        if (prevWords.length === 0 || prevWords[prevWords.length - 1].end < totalDur - 1.5) {
-          return generateAdaptiveTranscript(totalDur);
-        }
-        return prevWords;
+      // Recalculate viral moments with current user words
+      setWords((curWords) => {
+        const moments = generateViralMoments(updated, 30, curWords);
+        setViralMoments(moments);
+        return curWords;
       });
-
-      // Recalculate viral moments
-      const moments = generateViralMoments(updated);
-      setViralMoments(moments);
-      if (moments.length > 0 && !activeMomentId) {
-        setActiveMomentId(moments[0].id);
-        setHookTitle(moments[0].scores.hookTitle);
-      }
 
       return updated;
     });
-  }, [activeMomentId]);
+  }, []);
 
   // Add Sticker with Paired SFX
   const handleAddOverlayAndSfx = useCallback((overlay: StickerOverlay, sfx: SfxTrackItem) => {
@@ -385,6 +356,8 @@ export function App() {
                 setWords={setWords}
                 currentTime={currentTime}
                 onSeek={(t) => setCurrentTime(t)}
+                clips={clips}
+                totalDuration={totalDuration}
               />
             )}
             {sidebarTab === 'assets' && (
@@ -435,6 +408,9 @@ export function App() {
           }}
           selectedOverlayId={selectedOverlayId}
           onUpdateOverlayPos={handleUpdateOverlayPos}
+          onUpdateCaptionPosition={(x, y) =>
+            setCaptionTemplate((prev) => ({ ...prev, position_x: x, position_y: y }))
+          }
           words={showCaptions ? words : []}
           captionTemplate={captionTemplate}
           hookTitle={hookTitle}

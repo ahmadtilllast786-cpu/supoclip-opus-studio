@@ -94,7 +94,8 @@ export function calculateViralityScores(
  */
 export function generateViralMoments(
   rawClips: VideoClip[],
-  targetDuration: number = 30
+  targetDuration: number = 30,
+  existingWords: TranscriptWord[] = []
 ): ViralClipSegment[] {
   const totalLength = rawClips.reduce((sum, c) => sum + c.duration, 0);
   const numSegments = Math.max(3, Math.min(5, Math.floor(totalLength / 15) || 3));
@@ -106,34 +107,10 @@ export function generateViralMoments(
     const dur = Math.min(totalLength - start, Math.max(12, targetDuration));
     const scores = calculateViralityScores('', i);
 
-    // Contextual viral speech words
-    const sampleWords: TranscriptWord[] = [
-      { word: 'STOP', start: 0.2, end: 0.6, isEmphasis: true, emoji: '🛑' },
-      { word: 'scrolling', start: 0.6, end: 1.0 },
-      { word: 'right', start: 1.0, end: 1.25 },
-      { word: 'now', start: 1.25, end: 1.5, isEmphasis: true },
-      { word: 'because', start: 1.6, end: 1.9 },
-      { word: 'this', start: 1.9, end: 2.1 },
-      { word: 'INSANE', start: 2.1, end: 2.6, isEmphasis: true, emoji: '🔥' },
-      { word: 'strategy', start: 2.6, end: 3.0 },
-      { word: 'will', start: 3.1, end: 3.3 },
-      { word: 'change', start: 3.3, end: 3.6 },
-      { word: 'everything.', start: 3.6, end: 4.1, isEmphasis: true, emoji: '🚀' },
-      { word: 'Most', start: 4.3, end: 4.6 },
-      { word: 'people', start: 4.6, end: 4.9 },
-      { word: 'waste', start: 4.9, end: 5.3 },
-      { word: 'hours', start: 5.3, end: 5.7 },
-      { word: 'editing', start: 5.8, end: 6.2 },
-      { word: 'manually.', start: 6.2, end: 6.7 },
-      { word: 'Watch', start: 6.9, end: 7.2, emoji: '👀' },
-      { word: 'how', start: 7.2, end: 7.4 },
-      { word: 'fast', start: 7.4, end: 7.7 },
-      { word: 'AI', start: 7.7, end: 8.0, isEmphasis: true, emoji: '🤖' },
-      { word: 'does', start: 8.0, end: 8.3 },
-      { word: 'it', start: 8.3, end: 8.5 },
-      { word: 'for', start: 8.5, end: 8.7 },
-      { word: 'you.', start: 8.7, end: 9.1 },
-    ];
+    // Use actual transcribed words for this segment if present
+    const segmentWords = existingWords
+      .filter((w) => w.start >= start && w.end <= start + dur)
+      .map((w) => ({ ...w, start: w.start - start, end: w.end - start }));
 
     segments.push({
       id: `viral-seg-${i + 1}-${Date.now()}`,
@@ -142,8 +119,8 @@ export function generateViralMoments(
       endTime: start + dur,
       duration: dur,
       scores,
-      transcript: sampleWords.map((w) => w.word).join(' '),
-      words: sampleWords,
+      transcript: segmentWords.map((w) => w.word).join(' '),
+      words: segmentWords,
     });
   }
 
@@ -152,50 +129,9 @@ export function generateViralMoments(
 }
 
 /**
- * Generates continuous, rhythm-synced viral caption words spanning any project duration.
- * Perfect for newly uploaded footage so that subtitles highlight across the whole video.
+ * Returns an empty or user-supplied transcript without injecting hardcoded fake words.
  */
-export function generateAdaptiveTranscript(totalDurationSec: number): TranscriptWord[] {
-  const viralPhrases = [
-    { text: 'STOP scrolling right now', emojis: ['🛑'], emphasisIndices: [0, 3] },
-    { text: 'this INSANE secret changes everything', emojis: ['🔥', '🚀'], emphasisIndices: [1, 4] },
-    { text: 'most people waste endless hours editing', emojis: ['⏳'], emphasisIndices: [2, 4] },
-    { text: 'watch how fast AI automates your workflow', emojis: ['🤖', '⚡'], emphasisIndices: [3, 4] },
-    { text: 'every single cut is perfectly timed', emojis: ['🎯'], emphasisIndices: [0, 4] },
-    { text: 'sound effects trigger at exact moments', emojis: ['🔊'], emphasisIndices: [0, 1] },
-    { text: 'dynamic punch zooms hold viewer retention', emojis: ['💥'], emphasisIndices: [2, 5] },
-    { text: 'now you can produce 10x more content', emojis: ['📈', '💰'], emphasisIndices: [4, 6] },
-    { text: 'try this strategy on your next upload', emojis: ['✨'], emphasisIndices: [1, 6] },
-  ];
-
-  const words: TranscriptWord[] = [];
-  let currentTime = 0.3;
-  let phraseIdx = 0;
-
-  while (currentTime < totalDurationSec - 0.5) {
-    const phrase = viralPhrases[phraseIdx % viralPhrases.length];
-    const phraseWords = phrase.text.split(' ');
-
-    phraseWords.forEach((wordText, wIdx) => {
-      const isEmphasis = phrase.emphasisIndices.includes(wIdx);
-      const wordDur = isEmphasis ? 0.45 : 0.32;
-      const emoji = isEmphasis && phrase.emojis.length > 0 ? phrase.emojis[wIdx % phrase.emojis.length] : undefined;
-
-      words.push({
-        word: isEmphasis ? wordText.toUpperCase() : wordText,
-        start: Number(currentTime.toFixed(2)),
-        end: Number((currentTime + wordDur).toFixed(2)),
-        isEmphasis,
-        emoji,
-      });
-
-      currentTime += wordDur + 0.06;
-    });
-
-    currentTime += 0.25; // short pause between sentences
-    phraseIdx++;
-  }
-
-  return words;
+export function generateAdaptiveTranscript(_totalDurationSec: number): TranscriptWord[] {
+  return [];
 }
 

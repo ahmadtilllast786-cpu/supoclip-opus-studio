@@ -205,6 +205,29 @@ function drawCroppedVideo(
   }
 }
 
+let cachedOff1: HTMLCanvasElement | null = null;
+let cachedOff2: HTMLCanvasElement | null = null;
+
+function getCachedTransitionCanvases(width: number, height: number): [HTMLCanvasElement, HTMLCanvasElement] {
+  if (!cachedOff1) {
+    cachedOff1 = document.createElement('canvas');
+  }
+  if (cachedOff1.width !== width || cachedOff1.height !== height) {
+    cachedOff1.width = width;
+    cachedOff1.height = height;
+  }
+
+  if (!cachedOff2) {
+    cachedOff2 = document.createElement('canvas');
+  }
+  if (cachedOff2.width !== width || cachedOff2.height !== height) {
+    cachedOff2.width = width;
+    cachedOff2.height = height;
+  }
+
+  return [cachedOff1, cachedOff2];
+}
+
 /**
  * Draws two clips with a canvas transition effect.
  */
@@ -217,23 +240,25 @@ function drawTransitionedClips(
   width: number,
   height: number
 ) {
-  const off1 = document.createElement('canvas');
-  off1.width = width;
-  off1.height = height;
+  const [off1, off2] = getCachedTransitionCanvases(width, height);
+
   const ctx1 = off1.getContext('2d');
-  if (ctx1 && (outgoingVideo.readyState >= 1 || outgoingVideo.videoWidth > 0)) {
-    drawCroppedVideo(ctx1, outgoingVideo, width, height);
+  if (ctx1) {
+    ctx1.clearRect(0, 0, width, height);
+    if (outgoingVideo.readyState >= 1 || outgoingVideo.videoWidth > 0) {
+      drawCroppedVideo(ctx1, outgoingVideo, width, height);
+    }
   }
 
-  const off2 = document.createElement('canvas');
-  off2.width = width;
-  off2.height = height;
   const ctx2 = off2.getContext('2d');
-  if (ctx2 && (incomingVideo.readyState >= 1 || incomingVideo.videoWidth > 0)) {
-    drawCroppedVideo(ctx2, incomingVideo, width, height);
-  } else if (ctx2 && ctx1) {
-    // If incoming frame not yet ready, draw outgoing so no black flash occurs
-    drawCroppedVideo(ctx2, outgoingVideo, width, height);
+  if (ctx2) {
+    ctx2.clearRect(0, 0, width, height);
+    if (incomingVideo.readyState >= 1 || incomingVideo.videoWidth > 0) {
+      drawCroppedVideo(ctx2, incomingVideo, width, height);
+    } else if (ctx1) {
+      // If incoming frame not yet ready, draw outgoing so no black flash occurs
+      drawCroppedVideo(ctx2, outgoingVideo, width, height);
+    }
   }
 
   renderTransition(ctx, off1, off2, progress, transition, width, height);

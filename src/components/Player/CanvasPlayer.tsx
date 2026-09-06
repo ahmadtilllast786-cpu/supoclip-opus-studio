@@ -22,6 +22,7 @@ import {
 import { renderCompositedFrame } from '../../core/video/canvasRenderer';
 import { playSfxInstant } from '../../core/audio/sfxSynthesizer';
 import { calculatePunchZoom } from '../../core/video/punchZoomEngine';
+import { getLastSubtitleBounds } from '../../core/captions/captionRenderer';
 
 interface CanvasPlayerProps {
   currentTime: number;
@@ -37,6 +38,7 @@ interface CanvasPlayerProps {
   onSelectOverlay?: (id: string) => void;
   selectedOverlayId?: string | null;
   onUpdateOverlayPos?: (id: string, x: number, y: number) => void;
+  onUpdateCaptionPosition?: (x: number, y: number) => void;
   words?: TranscriptWord[];
   captionTemplate?: CaptionTemplate;
   hookTitle?: string | null;
@@ -56,6 +58,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   onSelectOverlay,
   selectedOverlayId,
   onUpdateOverlayPos,
+  onUpdateCaptionPosition,
   words = [],
   captionTemplate,
   hookTitle,
@@ -64,6 +67,9 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isDraggingOverlay, setIsDraggingOverlay] = useState(false);
+  const [isHoveringCaption, setIsHoveringCaption] = useState(false);
+  const [isDraggingCaption, setIsDraggingCaption] = useState(false);
+  const [captionDragOffset, setCaptionDragOffset] = useState({ x: 0, y: 0 });
   const lastTriggeredSfxRef = useRef<Set<string>>(new Set());
 
   // Mutable state refs to prevent re-instantiating RAF loop on every frame
@@ -136,89 +142,72 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
         if (activeClipIndex !== -1) {
           const activeClip = curClips[activeClipIndex];
           const activeVideo = curVideoElements.get(activeClip.id);
+          const nextClip = activeClipIndex + 1 < curClips.length ? curClips[activeClipIndex + 1] : null;
+          const nextVideo = nextClip ? curVideoElements.get(nextClip.id) : null;
+          const transitionDuration = nextClip?.transitionDuration || 0.25;
+          const timeLeftInClip = activeClip.startTimelineTime + activeClip.duration - time;
 
-          if (activeVideo) {
-            activeVideo.muted = muted;
-            activeVideo.volume = activeClip.volume;
+          // Check if active clip finished its duration segment
+          const isClipEnded =
+            activeVideo?.ended ||
+            timeLeftInClip <= 0.01;
 
-            const targetVideoTime =
-              activeClip.inPoint + (time - activeClip.startTimelineTime) * activeClip.speed;
-
-            // Start active video if paused and not currently seeking
-            if (activeVideo.paused && !activeVideo.seeking) {
-              if (Math.abs(activeVideo.currentTime - targetVideoTime) > 0.15) {
-                activeVideo.currentTime = targetVideoTime;
-              }
-              activeVideo.play().catch(() => {});
-            }
-
-            // Check if active clip finished its segment
-            const isClipEnded =
-              activeVideo.ended ||
-              activeVideo.currentTime >= activeClip.outPoint - 0.04 ||
-              time >= activeClip.startTimelineTime + activeClip.duration - 0.02;
-
-            if (isClipEnded) {
-              // Pause current clip
+          if (isClipEnded) {
+            if (activeVideo && !activeVideo.paused) {
               activeVideo.pause();
+            }
 
-              // Switch to next sequential clip
-              const nextClipIndex = activeClipIndex + 1;
-              if (nextClipIndex < curClips.length) {
-                const nextClip = curClips[nextClipIndex];
-                const nextVideo = curVideoElements.get(nextClip.id);
-                if (nextVideo) {
-                  nextVideo.currentTime = nextClip.inPoint;
-                  nextVideo.muted = muted;
-                  nextVideo.volume = nextClip.volume;
-                  nextVideo.play().catch(() => {});
-                }
-                time = nextClip.startTimelineTime;
-              } else {
-                // End of sequence
-                time = totalDuration;
-                setIsPlaying(false);
-              }
-            } else if (!activeVideo.paused) {
-              // Hardware video clock: slave playhead to the active playing video
-              const videoTimelineTime =
-                activeClip.startTimelineTime +
-                (activeVideo.currentTime - activeClip.inPoint) / activeClip.speed;
-
-              // Only correct if heavy drift (>0.35s)
-              if (Math.abs(videoTimelineTime - time) > 0.35) {
-                activeVideo.currentTime = targetVideoTime;
-              } else {
-                time = videoTimelineTime;
-              }
+            if (nextClip && nextVideo) {
+              nextVideo.currentTime = nextClip.inPoint;
+              nextVideo.muted = muted;
+              nextVideo.volume = nextClip.volume;
+              nextVideo.play().catch(() => {});
+              time = nextClip.startTimelineTime;
             } else {
-              // Active video starting up: gently advance clock
-              time += delta;
+              time = totalDuration;
+              setIsPlaying(false);
             }
-
-            // Pre-warm / pre-seek upcoming clip when approaching transition window (< 0.8s)
-            const timeLeftInClip = activeClip.startTimelineTime + activeClip.duration - time;
-            if (timeLeftInClip <= 0.8 && activeClipIndex + 1 < curClips.length) {
-              const nextClip = curClips[activeClipIndex + 1];
-              const nextVideo = curVideoElements.get(nextClip.id);
-              if (
-                nextVideo &&
-                nextVideo.paused &&
-                Math.abs(nextVideo.currentTime - nextClip.inPoint) > 0.05
-              ) {
-                nextVideo.currentTime = nextClip.inPoint;
-              }
-            }
-
-            // Ensure all other inactive clips are paused
-            curVideoElements.forEach((vid, id) => {
-              if (id !== activeClip.id && !vid.paused) {
-                vid.pause();
-              }
-            });
           } else {
+            // Keep active clip playing smoothly in sync
+            if (activeVideo) {
+              activeVideo.muted = muted;
+              activeVideo.volume = activeClip.volume;
+
+              const targetVideoTime =
+                activeClip.inPoint + (time - activeClip.startTimelineTime) * activeClip.speed;
+
+              if (activeVideo.paused && !activeVideo.seeking) {
+                if (Math.abs(activeVideo.currentTime - targetVideoTime) > 0.1) {
+                  activeVideo.currentTime = targetVideoTime;
+                }
+                activeVideo.play().catch(() => {});
+              } else if (!activeVideo.seeking && Math.abs(activeVideo.currentTime - targetVideoTime) > 0.12) {
+                activeVideo.currentTime = targetVideoTime;
+              }
+            }
+
+            // Pre-roll and fluidly play upcoming clip during transition window
+            if (nextClip && nextVideo && timeLeftInClip <= transitionDuration + 0.1) {
+              const transProgress = Math.max(0, 1 - timeLeftInClip / transitionDuration);
+              const targetNextTime = nextClip.inPoint + transProgress * transitionDuration * nextClip.speed;
+              nextVideo.muted = muted;
+              nextVideo.volume = nextClip.volume;
+              if (nextVideo.paused && !nextVideo.seeking) {
+                nextVideo.currentTime = targetNextTime;
+                nextVideo.play().catch(() => {});
+              }
+            }
+
             time += delta;
           }
+
+          // Pause all video elements that are not active and not part of the active transition
+          curVideoElements.forEach((vid, id) => {
+            const isIncoming = nextClip && id === nextClip.id && timeLeftInClip <= transitionDuration + 0.1;
+            if (id !== activeClip.id && !isIncoming && !vid.paused) {
+              vid.pause();
+            }
+          });
         } else {
           // Playhead is in a gap or past clips
           time += delta;
@@ -337,7 +326,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [totalDuration, setIsPlaying, setCurrentTime]);
 
-  // Handle overlay drag on canvas
+  // Handle overlay & caption drag on canvas
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -346,7 +335,24 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     const clickX = ((e.clientX - rect.left) / rect.width) * 100;
     const clickY = ((e.clientY - rect.top) / rect.height) * 100;
 
-    // Check if clicked near an active overlay
+    // 1. Check Subtitle / Caption Bounding Box first
+    const subBounds = getLastSubtitleBounds();
+    const isOverCaption =
+      subBounds &&
+      clickX >= subBounds.x - 3 &&
+      clickX <= subBounds.x + subBounds.width + 3 &&
+      clickY >= subBounds.y - 3 &&
+      clickY <= subBounds.y + subBounds.height + 3;
+
+    if (isOverCaption && onUpdateCaptionPosition) {
+      setIsDraggingCaption(true);
+      const curX = (captionTemplate?.position_x ?? 0.5) * 100;
+      const curY = (captionTemplate?.position_y ?? 0.74) * 100;
+      setCaptionDragOffset({ x: clickX - curX, y: clickY - curY });
+      return;
+    }
+
+    // 2. Check if clicked near an active sticker overlay
     const activeOverlays = overlays.filter(
       (ov) => currentTime >= ov.startTimelineTime && currentTime < ov.startTimelineTime + ov.duration
     );
@@ -364,18 +370,50 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDraggingOverlay || !selectedOverlayId || !onUpdateOverlayPos) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const newX = Math.max(5, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
-    const newY = Math.max(5, Math.min(95, ((e.clientY - rect.top) / rect.height) * 100));
-    onUpdateOverlayPos(selectedOverlayId, Math.round(newX), Math.round(newY));
+    const mouseX = ((e.clientX - rect.left) / rect.width) * 100;
+    const mouseY = ((e.clientY - rect.top) / rect.height) * 100;
+
+    // If dragging caption
+    if (isDraggingCaption && onUpdateCaptionPosition) {
+      const newX = Math.max(6, Math.min(94, mouseX - captionDragOffset.x));
+      const newY = Math.max(6, Math.min(94, mouseY - captionDragOffset.y));
+      onUpdateCaptionPosition(Number((newX / 100).toFixed(3)), Number((newY / 100).toFixed(3)));
+      return;
+    }
+
+    // If dragging sticker overlay
+    if (isDraggingOverlay && selectedOverlayId && onUpdateOverlayPos) {
+      const newX = Math.max(5, Math.min(95, mouseX));
+      const newY = Math.max(5, Math.min(95, mouseY));
+      onUpdateOverlayPos(selectedOverlayId, Math.round(newX), Math.round(newY));
+      return;
+    }
+
+    // Detect hovering over captions
+    const subBounds = getLastSubtitleBounds();
+    const isOver = Boolean(
+      subBounds &&
+      mouseX >= subBounds.x - 3 &&
+      mouseX <= subBounds.x + subBounds.width + 3 &&
+      mouseY >= subBounds.y - 3 &&
+      mouseY <= subBounds.y + subBounds.height + 3
+    );
+    setIsHoveringCaption(isOver);
   };
 
   const handleCanvasMouseUp = () => {
+    setIsDraggingCaption(false);
     setIsDraggingOverlay(false);
+  };
+
+  const handleCanvasMouseLeave = () => {
+    setIsDraggingCaption(false);
+    setIsDraggingOverlay(false);
+    setIsHoveringCaption(false);
   };
 
   return (
@@ -412,9 +450,52 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
           onMouseDown={handleCanvasMouseDown}
           onMouseMove={handleCanvasMouseMove}
           onMouseUp={handleCanvasMouseUp}
-          className="w-full h-full object-contain cursor-crosshair"
-          title="Click to reposition active stickers"
+          onMouseLeave={handleCanvasMouseLeave}
+          className={`w-full h-full object-contain ${
+            isDraggingCaption
+              ? 'cursor-grabbing'
+              : isHoveringCaption
+              ? 'cursor-grab'
+              : isDraggingOverlay
+              ? 'cursor-grabbing'
+              : 'cursor-crosshair'
+          }`}
+          title={isHoveringCaption ? 'Click and drag captions anywhere' : 'Click to reposition captions or stickers'}
         />
+
+        {/* Interactive Caption Drag Bounding Box & Handles */}
+        {(isHoveringCaption || isDraggingCaption) && getLastSubtitleBounds() && (
+          <div
+            className={`absolute pointer-events-none rounded-xl transition-all duration-75 border-2 ${
+              isDraggingCaption
+                ? 'border-pink-500 shadow-xl shadow-pink-500/30 bg-pink-500/10'
+                : 'border-indigo-400 border-dashed bg-indigo-500/10 shadow-lg shadow-indigo-500/20'
+            }`}
+            style={{
+              left: `${getLastSubtitleBounds()!.x}%`,
+              top: `${getLastSubtitleBounds()!.y}%`,
+              width: `${getLastSubtitleBounds()!.width}%`,
+              height: `${getLastSubtitleBounds()!.height}%`,
+            }}
+          >
+            {/* 4 Corner drag dots */}
+            <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full shadow" />
+            <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full shadow" />
+            <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full shadow" />
+            <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-indigo-600 rounded-full shadow" />
+
+            {/* Position readout badge */}
+            <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 bg-slate-950/90 text-white font-mono text-[9px] px-2.5 py-0.5 rounded-full border border-indigo-500/60 shadow flex items-center space-x-1.5 whitespace-nowrap">
+              <span className="text-slate-300 font-sans font-bold">Captions</span>
+              <span className="text-pink-400 font-bold">
+                X:{Math.round((captionTemplate?.position_x ?? 0.5) * 100)}%
+              </span>
+              <span className="text-indigo-400 font-bold">
+                Y:{Math.round((captionTemplate?.position_y ?? 0.74) * 100)}%
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Punch Zoom Target Crosshair Overlay if Zoom is active */}
         {punchZoom.isActive && (

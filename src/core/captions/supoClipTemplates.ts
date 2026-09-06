@@ -23,6 +23,7 @@ export const SUPOCLIP_CAPTION_TEMPLATES: Record<CaptionTemplateId, CaptionTempla
     shadow: true,
     glow: false,
     max_words_per_line: 4,
+    position_x: 0.5,
     position_y: 0.80,
   },
 
@@ -48,6 +49,7 @@ export const SUPOCLIP_CAPTION_TEMPLATES: Record<CaptionTemplateId, CaptionTempla
     shadow: true,
     glow: false,
     max_words_per_line: 3,
+    position_x: 0.5,
     position_y: 0.74,
   },
 
@@ -73,6 +75,7 @@ export const SUPOCLIP_CAPTION_TEMPLATES: Record<CaptionTemplateId, CaptionTempla
     shadow: true,
     glow: false,
     max_words_per_line: 3,
+    position_x: 0.5,
     position_y: 0.70,
   },
 
@@ -98,6 +101,7 @@ export const SUPOCLIP_CAPTION_TEMPLATES: Record<CaptionTemplateId, CaptionTempla
     shadow: true,
     glow: false,
     max_words_per_line: 4,
+    position_x: 0.5,
     position_y: 0.78,
   },
 
@@ -123,6 +127,7 @@ export const SUPOCLIP_CAPTION_TEMPLATES: Record<CaptionTemplateId, CaptionTempla
     shadow: false,
     glow: true,
     max_words_per_line: 4,
+    position_x: 0.5,
     position_y: 0.76,
   },
 
@@ -148,6 +153,7 @@ export const SUPOCLIP_CAPTION_TEMPLATES: Record<CaptionTemplateId, CaptionTempla
     shadow: false,
     glow: false,
     max_words_per_line: 6,
+    position_x: 0.5,
     position_y: 0.82,
   },
 
@@ -173,6 +179,7 @@ export const SUPOCLIP_CAPTION_TEMPLATES: Record<CaptionTemplateId, CaptionTempla
     shadow: false,
     glow: false,
     max_words_per_line: 5,
+    position_x: 0.5,
     position_y: 0.80,
   },
 };

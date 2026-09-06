@@ -10,8 +10,21 @@ export interface RenderCaptionsOptions {
   height: number;
 }
 
+export interface SubtitleBoundingBox {
+  x: number; // percentage 0-100
+  y: number; // percentage 0-100
+  width: number; // percentage 0-100
+  height: number; // percentage 0-100
+}
+
+let lastSubtitleBounds: SubtitleBoundingBox | null = null;
+
+export function getLastSubtitleBounds(): SubtitleBoundingBox | null {
+  return lastSubtitleBounds;
+}
+
 /**
- * Renders SupoClip-style word-by-word animated captions and Hook Title banner on HTML5 Canvas.
+ * Renders high-quality viral word-by-word animated captions and Hook Title banner on HTML5 Canvas.
  */
 export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
   const { ctx, currentTime, words, template, hookTitle, width, height } = options;
@@ -22,44 +35,54 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
   }
 
   // 2. Render Word-Level Animated Subtitles
-  if (!words || words.length === 0) return;
+  if (!words || words.length === 0) {
+    lastSubtitleBounds = null;
+    return;
+  }
 
   // Find active word index
-  const activeWordIdx = words.findIndex(
+  let targetIdx = words.findIndex(
     (w) => currentTime >= w.start && currentTime <= w.end
   );
 
-  // If no word is strictly active, check if we are within speech range
-  let targetIdx = activeWordIdx;
+  // If no word is strictly active at currentTime, locate closest word chunk
+  // so the user can easily position, drag, and preview captions at any timestamp
   if (targetIdx === -1) {
-    targetIdx = words.findIndex((w) => currentTime < w.start);
-    if (targetIdx > 0) targetIdx -= 1;
-    else targetIdx = 0;
-
-    const nearWord = words[targetIdx];
-    if (!nearWord || Math.abs(currentTime - nearWord.end) > 0.6) {
-      return; // Outside active subtitle window
+    if (currentTime < words[0].start) {
+      targetIdx = 0;
+    } else if (currentTime > words[words.length - 1].end) {
+      targetIdx = words.length - 1;
+    } else {
+      const nextIdx = words.findIndex((w) => currentTime < w.start);
+      targetIdx = nextIdx > 0 ? nextIdx - 1 : 0;
     }
   }
 
   // Group into line chunks according to template.max_words_per_line
-  const wordsPerLine = template.max_words_per_line || 4;
+  const wordsPerLine = template.max_words_per_line || 3;
   const lineStartIdx = Math.floor(targetIdx / wordsPerLine) * wordsPerLine;
   const lineWords = words.slice(lineStartIdx, lineStartIdx + wordsPerLine);
 
-  if (lineWords.length === 0) return;
+  if (lineWords.length === 0) {
+    lastSubtitleBounds = null;
+    return;
+  }
 
   ctx.save();
 
   // Calculate scaled font size relative to 1080 canvas width
   const scaleFactor = width / 1080;
   const fontSize = Math.round(template.font_size * scaleFactor * 1.35);
-  ctx.font = `900 ${fontSize}px ${template.font_family}`;
+  ctx.font = `900 ${fontSize}px "Montserrat", "Space Grotesk", "Bangers", "Impact", -apple-system, sans-serif`;
   ctx.textBaseline = 'middle';
 
-  const posY = template.position_y * height;
+  // Support 2D Draggable Position (position_x and position_y)
+  const normX = template.position_x !== undefined ? template.position_x : 0.5;
+  const normY = template.position_y !== undefined ? template.position_y : 0.74;
+  const posX = normX * width;
+  const posY = normY * height;
 
-  // Measure word widths to center the line
+  // Measure word widths to layout the line
   const wordMeasurements = lineWords.map((item) => {
     let text = template.uppercase ? item.word.toUpperCase() : item.word;
     if (template.emoji && item.emoji) text += ` ${item.emoji}`;
@@ -76,28 +99,34 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
     wordMeasurements.reduce((sum, m) => sum + m.width, 0) +
     (wordMeasurements.length - 1) * wordSpacing;
 
-  let currentX = (width - totalLineWidth) / 2;
+  let currentX = posX - totalLineWidth / 2;
+
+  // Save bounding box for interactive dragging on canvas
+  const padH = 20 * scaleFactor;
+  const padV = 16 * scaleFactor;
+  const boxHeight = fontSize + padV * 2;
+  lastSubtitleBounds = {
+    x: Math.max(2, Math.min(95, ((posX - totalLineWidth / 2 - padH) / width) * 100)),
+    y: Math.max(2, Math.min(95, ((posY - boxHeight / 2) / height) * 100)),
+    width: Math.max(10, ((totalLineWidth + padH * 2) / width) * 100),
+    height: Math.max(6, (boxHeight / height) * 100),
+  };
 
   // Optional background container for minimal/podcast templates
   if (template.background && template.background_color) {
     ctx.fillStyle = template.background_color;
-    const paddingH = 24 * scaleFactor;
-    const paddingV = 14 * scaleFactor;
-    const boxHeight = fontSize + paddingV * 2;
-    const boxY = posY - boxHeight / 2;
-
     ctx.beginPath();
     ctx.roundRect(
-      currentX - paddingH,
-      boxY,
-      totalLineWidth + paddingH * 2,
+      currentX - padH,
+      posY - boxHeight / 2,
+      totalLineWidth + padH * 2,
       boxHeight,
       12 * scaleFactor
     );
     ctx.fill();
   }
 
-  // Render each word
+  // Render each word with active karaoke styling
   wordMeasurements.forEach((item) => {
     const isCurrentActive =
       currentTime >= item.word.start && currentTime <= item.word.end;
@@ -106,19 +135,19 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
     ctx.save();
 
     let wordScale = 1.0;
-    let wordAlpha = 1.0;
 
-    // SupoClip "word_pop" spring animation on active karaoke word
+    // SupoClip "word_pop" spring bounce animation on active karaoke word
     if (isCurrentActive && template.word_pop) {
-      const popT = Math.min(1, elapsedInWord / 0.12);
+      const popT = Math.min(1, Math.max(0, elapsedInWord / 0.12));
       wordScale = 1.0 + 0.18 * Math.sin(popT * Math.PI);
     }
 
-    // Hormozi Style Word Box / Pill behind active word
+    // Hormozi Style Capsule Pill behind active word
     if (isCurrentActive && template.word_box && template.word_box_color) {
-      const pillPadH = 14 * scaleFactor;
-      const pillPadV = 8 * scaleFactor;
+      const pillPadH = 16 * scaleFactor;
+      const pillPadV = 10 * scaleFactor;
       const pillHeight = fontSize + pillPadV * 2;
+      const pillRadius = pillHeight / 2; // Full rounded capsule
 
       ctx.fillStyle = template.word_box_color;
       ctx.beginPath();
@@ -127,45 +156,47 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
         posY - pillHeight / 2,
         item.width + pillPadH,
         pillHeight,
-        8 * scaleFactor
+        pillRadius
       );
       ctx.fill();
     }
 
-    // Neon Glow effect
+    // Drop shadow & Glow
     if (template.glow) {
       ctx.shadowColor = template.highlight_color;
-      ctx.shadowBlur = isCurrentActive ? 22 * scaleFactor : 8 * scaleFactor;
+      ctx.shadowBlur = isCurrentActive ? 24 * scaleFactor : 8 * scaleFactor;
     } else if (template.shadow) {
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-      ctx.shadowBlur = 10 * scaleFactor;
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+      ctx.shadowBlur = 12 * scaleFactor;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 4 * scaleFactor;
+      ctx.shadowOffsetY = 5 * scaleFactor;
     }
 
-    // Determine font color
+    // High contrast color selection
     let textColor = template.font_color;
     if (isCurrentActive) {
-      textColor = template.highlight_color;
+      // In pill box mode (e.g. Hormozi), text is dark on bright green pill
+      textColor = template.word_box ? '#05070a' : template.highlight_color;
     } else if (item.word.isEmphasis && template.emphasis_color) {
       textColor = template.emphasis_color;
     }
 
-    // Word transform for pop
+    // Word transform for active pop
     const centerX = currentX + item.width / 2;
     ctx.translate(centerX, posY);
     ctx.scale(wordScale, wordScale);
     ctx.translate(-centerX, -posY);
 
-    // Draw outline
-    if (template.stroke_color && template.stroke_width > 0) {
+    // Thick clean stroke with round joins (prevents letter spikes)
+    if (template.stroke_color && template.stroke_width > 0 && !(isCurrentActive && template.word_box)) {
       ctx.strokeStyle = template.stroke_color;
-      ctx.lineWidth = template.stroke_width * scaleFactor * 1.5;
+      ctx.lineWidth = Math.max(3, template.stroke_width * scaleFactor * 1.6);
       ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
       ctx.strokeText(item.text, currentX, posY);
     }
 
-    // Fill text
+    // Fill high quality text
     ctx.fillStyle = textColor;
     ctx.fillText(item.text, currentX, posY);
 

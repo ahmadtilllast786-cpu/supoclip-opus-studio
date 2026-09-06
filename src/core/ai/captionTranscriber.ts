@@ -349,3 +349,278 @@ export function parseSrt(srtContent: string): TranscriptWord[] {
 
   return words;
 }
+
+/**
+ * Encodes an AudioBuffer into a 16kHz mono PCM 16-bit WAV Blob for speech recognition APIs.
+ */
+export function encodeAudioBufferToWav(buffer: AudioBuffer, targetSampleRate: number = 16000): Blob {
+  const numChannels = 1;
+  const sourceRate = buffer.sampleRate;
+  const sourceChannel = buffer.getChannelData(0);
+
+  // Resample to targetSampleRate (e.g. 16kHz for Whisper)
+  const ratio = sourceRate / targetSampleRate;
+  const targetLength = Math.round(sourceChannel.length / ratio);
+  const resampled = new Float32Array(targetLength);
+
+  for (let i = 0; i < targetLength; i++) {
+    const srcIndex = i * ratio;
+    const i0 = Math.floor(srcIndex);
+    const i1 = Math.min(i0 + 1, sourceChannel.length - 1);
+    const frac = srcIndex - i0;
+    resampled[i] = sourceChannel[i0] * (1 - frac) + sourceChannel[i1] * frac;
+  }
+
+  // Create WAV buffer
+  const bufferLength = 44 + targetLength * 2;
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(arrayBuffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  // RIFF identifier
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + targetLength * 2, true);
+  writeString(8, 'WAVE');
+  // format chunk identifier
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // subchunk1size (16 for PCM)
+  view.setUint16(20, 1, true);  // audio format (1 = PCM)
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * numChannels * 2, true); // byte rate
+  view.setUint16(32, numChannels * 2, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  // data chunk identifier
+  writeString(36, 'data');
+  view.setUint32(40, targetLength * 2, true);
+
+  // Write PCM 16-bit samples
+  let offset = 44;
+  for (let i = 0; i < targetLength; i++) {
+    const s = Math.max(-1, Math.min(1, resampled[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return new Blob([arrayBuffer], { type: 'audio/wav' });
+}
+
+export interface SpeechSegment {
+  start: number;
+  end: number;
+  duration: number;
+  energy: number;
+}
+
+/**
+ * Detects actual spoken vocal utterances using Voice Activity Detection (VAD) from raw AudioBuffer.
+ */
+export function detectEnglishSpeechSegments(audioBuffer: AudioBuffer): SpeechSegment[] {
+  const channelData = audioBuffer.getChannelData(0);
+  const sampleRate = audioBuffer.sampleRate;
+  const frameDuration = 0.03; // 30ms frames
+  const frameSize = Math.floor(sampleRate * frameDuration);
+  const totalFrames = Math.floor(channelData.length / frameSize);
+
+  const energies = new Float32Array(totalFrames);
+  let totalEnergy = 0;
+
+  for (let i = 0; i < totalFrames; i++) {
+    let sumSquares = 0;
+    const start = i * frameSize;
+    for (let j = 0; j < frameSize; j++) {
+      const val = channelData[start + j];
+      sumSquares += val * val;
+    }
+    const rms = Math.sqrt(sumSquares / frameSize);
+    energies[i] = rms;
+    totalEnergy += rms;
+  }
+
+  const avgEnergy = totalEnergy / (totalFrames || 1);
+  const threshold = Math.max(0.012, avgEnergy * 0.6);
+
+  const segments: SpeechSegment[] = [];
+  let inSpeech = false;
+  let segmentStartFrame = 0;
+
+  for (let i = 0; i < totalFrames; i++) {
+    const isVoice = energies[i] > threshold;
+
+    if (isVoice && !inSpeech) {
+      inSpeech = true;
+      segmentStartFrame = i;
+    } else if (!isVoice && inSpeech) {
+      // Check if gap is short (< 150ms) to bridge natural intra-word stops
+      let gapLen = 0;
+      while (i + gapLen < totalFrames && energies[i + gapLen] <= threshold && gapLen * frameDuration < 0.18) {
+        gapLen++;
+      }
+      if (gapLen * frameDuration >= 0.18) {
+        inSpeech = false;
+        const start = segmentStartFrame * frameDuration;
+        const end = i * frameDuration;
+        if (end - start >= 0.12) {
+          segments.push({
+            start: Number(start.toFixed(2)),
+            end: Number(end.toFixed(2)),
+            duration: Number((end - start).toFixed(2)),
+            energy: energies[segmentStartFrame],
+          });
+        }
+      } else {
+        i += gapLen; // Bridge over short silence
+      }
+    }
+  }
+
+  if (inSpeech) {
+    const start = segmentStartFrame * frameDuration;
+    const end = totalFrames * frameDuration;
+    if (end - start >= 0.12) {
+      segments.push({
+        start: Number(start.toFixed(2)),
+        end: Number(end.toFixed(2)),
+        duration: Number((end - start).toFixed(2)),
+        energy: energies[segmentStartFrame],
+      });
+    }
+  }
+
+  return segments;
+}
+
+/**
+ * Maps an English script or transcript onto real spoken audio intervals detected from the video.
+ */
+export function alignScriptToSpeechAudio(
+  script: string,
+  audioBuffer?: AudioBuffer,
+  totalDurationSec?: number
+): TranscriptWord[] {
+  const tokens = script.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [];
+
+  const words: TranscriptWord[] = [];
+
+  if (audioBuffer) {
+    const segments = detectEnglishSpeechSegments(audioBuffer);
+    if (segments.length > 0) {
+      // Subdivide speech segments among the script tokens proportionally
+      const totalSpeechTime = segments.reduce((sum, s) => sum + s.duration, 0);
+      let tokenIdx = 0;
+
+      for (const seg of segments) {
+        if (tokenIdx >= tokens.length) break;
+
+        // Estimate number of words in this segment proportional to duration
+        const proportion = seg.duration / totalSpeechTime;
+        const segWordCount = Math.max(1, Math.min(tokens.length - tokenIdx, Math.round(tokens.length * proportion)));
+        const wordTime = seg.duration / segWordCount;
+
+        for (let w = 0; w < segWordCount; w++) {
+          if (tokenIdx >= tokens.length) break;
+          const text = tokens[tokenIdx];
+          const wStart = seg.start + w * wordTime;
+          const wEnd = Math.min(seg.end, wStart + wordTime * 0.92);
+
+          words.push({
+            word: text,
+            start: Number(wStart.toFixed(2)),
+            end: Number(wEnd.toFixed(2)),
+            isEmphasis: text.length > 5 || text === text.toUpperCase() || tokenIdx % 4 === 0,
+          });
+          tokenIdx++;
+        }
+      }
+
+      // Distribute any remaining tokens
+      while (tokenIdx < tokens.length) {
+        const lastWord = words[words.length - 1];
+        const start = lastWord ? lastWord.end + 0.08 : 0.2;
+        words.push({
+          word: tokens[tokenIdx],
+          start: Number(start.toFixed(2)),
+          end: Number((start + 0.35).toFixed(2)),
+          isEmphasis: false,
+        });
+        tokenIdx++;
+      }
+
+      return words;
+    }
+  }
+
+  // Uniform fallback alignment across duration
+  const dur = totalDurationSec || tokens.length * 0.4;
+  const timePerWord = Math.max(0.28, Math.min(0.65, dur / (tokens.length || 1)));
+
+  tokens.forEach((t, i) => {
+    words.push({
+      word: t,
+      start: Number((i * timePerWord + 0.2).toFixed(2)),
+      end: Number((i * timePerWord + timePerWord * 0.9 + 0.2).toFixed(2)),
+      isEmphasis: i % 4 === 0,
+    });
+  });
+
+  return words;
+}
+
+/**
+ * Transcribes audio with OpenAI or Groq Whisper API for genuine English word-level timestamps.
+ */
+export async function transcribeWithWhisperApi(
+  audioBlob: Blob,
+  apiKey: string,
+  service: 'groq' | 'openai' = 'groq'
+): Promise<TranscriptWord[]> {
+  const formData = new FormData();
+  formData.append('file', audioBlob, 'audio.wav');
+  formData.append('model', service === 'groq' ? 'whisper-large-v3' : 'whisper-1');
+  formData.append('language', 'en');
+  formData.append('response_format', 'verbose_json');
+  formData.append('timestamp_granularities[]', 'word');
+
+  const endpoint =
+    service === 'groq'
+      ? 'https://api.groq.com/openai/v1/audio/transcriptions'
+      : 'https://api.openai.com/v1/audio/transcriptions';
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Whisper API error (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  const words: TranscriptWord[] = [];
+
+  if (Array.isArray(data.words)) {
+    data.words.forEach((w: any, idx: number) => {
+      words.push({
+        word: w.word.trim(),
+        start: Number(Number(w.start).toFixed(2)),
+        end: Number(Number(w.end).toFixed(2)),
+        isEmphasis: idx % 4 === 0 || w.word.length > 6,
+      });
+    });
+  } else if (typeof data.text === 'string') {
+    // If words array not returned, align text across detected duration
+    return alignScriptToSpeechAudio(data.text, undefined, data.duration || 10);
+  }
+
+  return words;
+}

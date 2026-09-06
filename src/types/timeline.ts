@@ -28,7 +28,8 @@ export interface CaptionTemplate {
   shadow: boolean;
   glow: boolean;
   max_words_per_line: number;
-  position_y: number;
+  position_x: number; // Normalized 0-1, default 0.5 (horizontal center)
+  position_y: number; // Normalized 0-1, default 0.75 (vertical placement)
 }
 
 export interface ViralityScorecard {
