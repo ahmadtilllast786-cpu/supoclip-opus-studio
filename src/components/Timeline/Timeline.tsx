@@ -31,6 +31,7 @@ import {
   TransitionType,
   CaptionTrackItem,
   TranscriptWord,
+  DiagnosticSettings,
 } from '../../types/timeline';
 import { extractClipWaveformSegment } from '../../core/audio/audioAnalyzer';
 import { recalculateChunkWordTimings, flattenCaptionsToWords } from '../../core/captions/captionHandler';
@@ -66,6 +67,8 @@ interface TimelineProps {
   isPlaying?: boolean;
   setIsPlaying?: (playing: boolean) => void;
   onAddPunchZoom: () => void;
+  onOpenDiagnostics?: () => void;
+  diagnosticSettings?: DiagnosticSettings;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({
@@ -95,6 +98,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   isPlaying = false,
   setIsPlaying,
   onAddPunchZoom,
+  onOpenDiagnostics,
+  diagnosticSettings,
 }) => {
   // Timeline Zoom & Viewport Sizing (Adjusted to One Screen by Default)
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
@@ -1083,6 +1088,11 @@ export const Timeline: React.FC<TimelineProps> = ({
       } else if (e.key === 'ArrowDown' || e.key === ']') {
         e.preventDefault();
         handleJumpToCut('next');
+      } else if (e.key === 'd' || e.key === 'D') {
+        if (onOpenDiagnostics) {
+          e.preventDefault();
+          onOpenDiagnostics();
+        }
       }
     };
 
@@ -1095,6 +1105,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     handleZoomToFit,
     handleNudgeFrame,
     handleJumpToCut,
+    onOpenDiagnostics,
   ]);
 
   return (
@@ -1136,6 +1147,8 @@ export const Timeline: React.FC<TimelineProps> = ({
         timecodeMode={timecodeMode}
         setTimecodeMode={setTimecodeMode}
         onAddPunchZoom={onAddPunchZoom}
+        onOpenDiagnostics={onOpenDiagnostics}
+        diagnosticSettings={diagnosticSettings}
       />
 
       {/* 2. TIMELINE MINIMAP NAVIGATOR */}
@@ -1516,7 +1529,9 @@ export const Timeline: React.FC<TimelineProps> = ({
                     className={`absolute h-10 rounded-lg flex items-center px-2 border-2 transition-all shadow-md select-none group ${
                       toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                     } ${
-                      isSelected
+                      ov.isDisabled
+                        ? 'bg-purple-950/40 border-dashed border-amber-600/50 opacity-60'
+                        : isSelected
                         ? 'bg-purple-900/90 border-purple-400 ring-2 ring-purple-400/50 shadow-purple-950/80 z-20'
                         : 'bg-purple-950/70 border-purple-700/60 hover:border-purple-500 z-10'
                     }`}
@@ -1534,10 +1549,37 @@ export const Timeline: React.FC<TimelineProps> = ({
                     )}
 
                     <span className="text-base mr-1.5 shrink-0 select-none pl-1">{ov.emoji}</span>
-                    <span className="text-xs font-semibold text-purple-200 truncate">{ov.label}</span>
-                    <span className="ml-auto text-[9px] font-mono text-purple-300/70 shrink-0 pr-1">
-                      {ov.duration.toFixed(1)}s
+                    <span
+                      className={`text-xs font-semibold truncate ${
+                        ov.isDisabled ? 'line-through text-slate-400' : 'text-purple-200'
+                      }`}
+                    >
+                      {ov.label}
                     </span>
+
+                    <div className="ml-auto flex items-center gap-1 shrink-0 pr-1">
+                      {/* Individual Overlay Visibility Bypass Toggle */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOverlays((prev) =>
+                            prev.map((o) => (o.id === ov.id ? { ...o, isDisabled: !o.isDisabled } : o))
+                          );
+                        }}
+                        title={ov.isDisabled ? 'Enable overlay (currently bypassed)' : 'Bypass / hide overlay on canvas'}
+                        className={`p-0.5 rounded transition-colors ${
+                          ov.isDisabled
+                            ? 'text-amber-400 bg-amber-950/60 hover:bg-amber-900/80'
+                            : 'text-purple-300/70 hover:text-white hover:bg-purple-800/60'
+                        }`}
+                      >
+                        {ov.isDisabled ? <EyeOff className="w-3 h-3 text-amber-400" /> : <Eye className="w-3 h-3" />}
+                      </button>
+
+                      <span className="text-[9px] font-mono text-purple-300/70">
+                        {ov.duration.toFixed(1)}s
+                      </span>
+                    </div>
 
                     {/* Right Trim Handle */}
                     {!isOverlayLocked && (
@@ -2019,7 +2061,9 @@ export const Timeline: React.FC<TimelineProps> = ({
                     className={`absolute h-11 rounded-lg px-2 flex items-center justify-between border-2 transition-all shadow-md select-none group ${
                       toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
                     } ${
-                      isTriggeredNow
+                      sfx.isMuted
+                        ? 'bg-emerald-950/40 border-dashed border-rose-600/50 opacity-60'
+                        : isTriggeredNow
                         ? 'bg-emerald-900/90 border-emerald-300 ring-2 ring-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.8)] scale-[1.02] z-20'
                         : isSelected
                         ? 'bg-emerald-950 border-emerald-400 ring-2 ring-emerald-400/50 z-20'
@@ -2040,10 +2084,34 @@ export const Timeline: React.FC<TimelineProps> = ({
 
                     <div className="flex items-center gap-1.5 overflow-hidden pl-1">
                       <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
-                      <span className="text-xs font-semibold text-emerald-200 truncate">{sfx.name}</span>
+                      <span
+                        className={`text-xs font-semibold truncate ${
+                          sfx.isMuted ? 'line-through text-slate-400' : 'text-emerald-200'
+                        }`}
+                      >
+                        {sfx.name}
+                      </span>
                     </div>
 
-                    <div className="flex items-center gap-1 pr-1">
+                    <div className="flex items-center gap-1.5 pr-1">
+                      {/* Individual SFX Mute/Unmute Toggle */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSfxTracks((prev) =>
+                            prev.map((s) => (s.id === sfx.id ? { ...s, isMuted: !s.isMuted } : s))
+                          );
+                        }}
+                        title={sfx.isMuted ? 'Unmute this sound effect' : 'Mute this sound effect'}
+                        className={`p-0.5 rounded transition-colors ${
+                          sfx.isMuted
+                            ? 'text-rose-400 bg-rose-950/60 hover:bg-rose-900/80'
+                            : 'text-emerald-300/70 hover:text-white hover:bg-emerald-800/60'
+                        }`}
+                      >
+                        {sfx.isMuted ? <VolumeX className="w-2.5 h-2.5 text-rose-400" /> : <Volume2 className="w-2.5 h-2.5" />}
+                      </button>
+
                       <span className="text-[9px] font-mono text-emerald-400">
                         {Math.round((sfx.volume ?? 1) * 100)}%
                       </span>

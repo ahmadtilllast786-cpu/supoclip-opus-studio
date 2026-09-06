@@ -16,6 +16,7 @@ import {
   TranscriptWord,
   ViralClipSegment,
   CaptionTrackItem,
+  DiagnosticSettings,
 } from './types/timeline';
 import { Navbar } from './components/Navbar';
 import { CanvasPlayer } from './components/Player/CanvasPlayer';
@@ -28,6 +29,7 @@ import { ViralMomentsPanel } from './components/Sidebar/ViralMomentsPanel';
 import { CaptionCustomizerPanel } from './components/Sidebar/CaptionCustomizerPanel';
 import { PropertyInspector } from './components/Inspector/PropertyInspector';
 import { ExportModal } from './components/Modals/ExportModal';
+import { DensityDiagnosticPanel } from './components/Modals/DensityDiagnosticPanel';
 import { executeAutoViralEdit } from './core/ai/autoEditor';
 import { generateDemoVideoClip } from './core/video/demoMediaGenerator';
 import { SUPOCLIP_CAPTION_TEMPLATES } from './core/captions/supoClipTemplates';
@@ -66,6 +68,13 @@ export function App() {
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [selectedSfxId, setSelectedSfxId] = useState<string | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isDiagnosticModalOpen, setIsDiagnosticModalOpen] = useState(false);
+  const [diagnosticSettings, setDiagnosticSettings] = useState<DiagnosticSettings>({
+    maxActiveOverlays: 5,
+    sfxThrottleIntervalMs: 200,
+    masterOverlayVisible: true,
+    masterSfxMuted: false,
+  });
   const [isAutoEditing, setIsAutoEditing] = useState(false);
   const [isLoadingDemo, setIsLoadingDemo] = useState(false);
 
@@ -251,6 +260,11 @@ export function App() {
   // Update Overlay Position
   const handleUpdateOverlayPos = useCallback((id: string, x: number, y: number) => {
     setOverlays((prev) => prev.map((ov) => (ov.id === id ? { ...ov, x, y } : ov)));
+  }, []);
+
+  // Update Overlay Scale
+  const handleUpdateOverlayScale = useCallback((id: string, scale: number) => {
+    setOverlays((prev) => prev.map((ov) => (ov.id === id ? { ...ov, scale } : ov)));
   }, []);
 
   // 1-Click Punch Zoom at playhead
@@ -513,6 +527,8 @@ export function App() {
           }}
           selectedOverlayId={selectedOverlayId}
           onUpdateOverlayPos={handleUpdateOverlayPos}
+          onUpdateOverlayScale={handleUpdateOverlayScale}
+          diagnosticSettings={diagnosticSettings}
           onUpdateCaptionPosition={(x, y) =>
             setCaptionTemplate((prev) => ({ ...prev, position_x: x, position_y: y }))
           }
@@ -619,6 +635,8 @@ export function App() {
         isPlaying={isPlaying}
         setIsPlaying={setIsPlaying}
         onAddPunchZoom={handleAddPunchZoom}
+        onOpenDiagnostics={() => setIsDiagnosticModalOpen(true)}
+        diagnosticSettings={diagnosticSettings}
       />
 
       {/* Lossless / High-Bitrate Export Modal */}
@@ -634,6 +652,32 @@ export function App() {
         words={showCaptions ? words : []}
         captionTemplate={captionTemplate}
         hookTitle={hookTitle}
+      />
+
+      {/* Density & Diagnostics Control Modal */}
+      <DensityDiagnosticPanel
+        isOpen={isDiagnosticModalOpen}
+        onClose={() => setIsDiagnosticModalOpen(false)}
+        diagnosticSettings={diagnosticSettings}
+        setDiagnosticSettings={setDiagnosticSettings}
+        activeOverlaysCount={
+          overlays.filter(
+            (ov) =>
+              !ov.isDisabled &&
+              currentTime >= ov.startTimelineTime &&
+              currentTime < ov.startTimelineTime + ov.duration
+          ).length
+        }
+        totalOverlaysCount={overlays.length}
+        activeSfxCount={
+          sfxTracks.filter(
+            (sfx) =>
+              !sfx.isMuted &&
+              currentTime >= sfx.startTimelineTime &&
+              currentTime < sfx.startTimelineTime + sfx.duration
+          ).length
+        }
+        totalSfxCount={sfxTracks.length}
       />
     </div>
   );

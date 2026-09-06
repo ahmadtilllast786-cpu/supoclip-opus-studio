@@ -89,6 +89,14 @@ export interface StickerOverlay {
   animation: OverlayAnimation;
   pairedSfx: SfxPreset | 'custom' | null;
   pairedSfxId?: string;
+  isDisabled?: boolean;  // Per-item visibility bypass toggle
+}
+
+export interface DiagnosticSettings {
+  maxActiveOverlays: number;       // 0 to 5 (limit simultaneous overlays on screen)
+  sfxThrottleIntervalMs: number;   // 50 to 2000 ms (minimum delay between sounds)
+  masterOverlayVisible: boolean;   // master switch to show/hide all visual overlays
+  masterSfxMuted: boolean;         // master switch to mute all sound effects
 }
 
 export interface SfxTrackItem {

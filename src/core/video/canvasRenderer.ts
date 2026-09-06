@@ -23,6 +23,9 @@ export interface RenderFrameOptions {
   hookTitle?: string | null;
   autoFramingEnabled?: boolean;
   sfxTracks?: SfxTrackItem[];
+  masterOverlayVisible?: boolean;
+  maxActiveOverlays?: number;
+  masterSfxMuted?: boolean;
 }
 
 /**
@@ -46,6 +49,9 @@ export function renderCompositedFrame(
     hookTitle,
     autoFramingEnabled = true,
     sfxTracks,
+    masterOverlayVisible = true,
+    maxActiveOverlays = 5,
+    masterSfxMuted = false,
   } = options;
 
   // Clear canvas background with dark studio backdrop
@@ -150,13 +156,20 @@ export function renderCompositedFrame(
 
   ctx.restore(); // Restore punch-zoom transform
 
-  // 2. Render Active Sticker & Emoji Overlays
-  const activeOverlays = overlays.filter(
-    (ov) => currentTime >= ov.startTimelineTime && currentTime < ov.startTimelineTime + ov.duration
-  );
+  // 2. Render Active Sticker & Emoji Overlays (Diagnostic & Density Filtered)
+  if (masterOverlayVisible) {
+    const activeOverlays = overlays
+      .filter(
+        (ov) =>
+          !ov.isDisabled &&
+          currentTime >= ov.startTimelineTime &&
+          currentTime < ov.startTimelineTime + ov.duration
+      )
+      .slice(0, maxActiveOverlays);
 
-  for (const ov of activeOverlays) {
-    drawStickerOverlay(ctx, ov, currentTime, width, height);
+    for (const ov of activeOverlays) {
+      drawStickerOverlay(ctx, ov, currentTime, width, height);
+    }
   }
 
   // 3. Render SupoClip Word-by-Word Captions & Hook Title Banner
@@ -172,10 +185,13 @@ export function renderCompositedFrame(
     });
   }
 
-  // 4. Render Special Sound Wave Sonic Ripple Effect on Canvas
-  if (sfxTracks && sfxTracks.length > 0) {
+  // 4. Render Special Sound Wave Sonic Ripple Effect on Canvas (Diagnostic Filtered)
+  if (sfxTracks && sfxTracks.length > 0 && !masterSfxMuted) {
     const activeSfx = sfxTracks.filter(
-      (sfx) => currentTime >= sfx.startTimelineTime && currentTime < sfx.startTimelineTime + sfx.duration
+      (sfx) =>
+        !sfx.isMuted &&
+        currentTime >= sfx.startTimelineTime &&
+        currentTime < sfx.startTimelineTime + sfx.duration
     );
     for (const sfx of activeSfx) {
       drawSpecialSoundEffect(ctx, sfx, currentTime, width, height, overlays);

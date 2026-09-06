@@ -19,7 +19,9 @@ import {
   Sparkles,
   Map,
   X,
+  Gauge,
 } from 'lucide-react';
+import { DiagnosticSettings } from '../../types/timeline';
 
 export type TimelineToolMode = 'select' | 'razor' | 'hand';
 
@@ -48,6 +50,8 @@ interface TimelineToolbarProps {
   timecodeMode: 'standard' | 'smpte';
   setTimecodeMode: (mode: 'standard' | 'smpte') => void;
   onAddPunchZoom: () => void;
+  onOpenDiagnostics?: () => void;
+  diagnosticSettings?: DiagnosticSettings;
 }
 
 export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
@@ -75,6 +79,8 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
   timecodeMode,
   setTimecodeMode,
   onAddPunchZoom,
+  onOpenDiagnostics,
+  diagnosticSettings,
 }) => {
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
@@ -180,13 +186,12 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
             title="Ripple Delete (Shift+Del) - Delete and pull subsequent clips left"
             className={`flex items-center gap-1 px-2 py-1 rounded-md border transition-colors shadow-sm ${
               hasSelection
-                ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+                ? 'bg-slate-800/80 hover:bg-rose-950/40 hover:text-rose-300 text-slate-200 border-slate-700/60'
                 : 'bg-slate-900/40 text-slate-600 border-slate-800/40 cursor-not-allowed'
             }`}
           >
             <FoldHorizontal className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden lg:inline">Ripple Del</span>
-            <span className="text-[10px] opacity-70 font-mono hidden xl:inline">⇧Del</span>
+            <span className="hidden xl:inline">Ripple</span>
           </button>
 
           <button
@@ -256,6 +261,29 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
           <Sparkles className="w-3.5 h-3.5 text-amber-400" />
           <span className="hidden xl:inline">+ Zoom</span>
         </button>
+
+        {/* Density & Diagnostic Controls Button */}
+        {onOpenDiagnostics && (
+          <button
+            onClick={onOpenDiagnostics}
+            title="Overlay Density & Diagnostic Controls (D)"
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md border transition-all text-xs font-semibold ${
+              diagnosticSettings &&
+              (!diagnosticSettings.masterOverlayVisible ||
+                diagnosticSettings.masterSfxMuted ||
+                diagnosticSettings.maxActiveOverlays < 5)
+                ? 'bg-cyan-950/80 text-cyan-300 border-cyan-500/60 shadow-sm shadow-cyan-950/50'
+                : 'bg-slate-800/40 text-slate-300 hover:text-white hover:bg-slate-800 border-slate-700/40'
+            }`}
+          >
+            <Gauge className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden xl:inline">Diagnostics</span>
+            {diagnosticSettings &&
+              (!diagnosticSettings.masterOverlayVisible || diagnosticSettings.masterSfxMuted) && (
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              )}
+          </button>
+        )}
       </div>
 
       {/* CENTER: Dual Timecode & Frame Readout */}
@@ -418,6 +446,10 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
                 <div className="flex items-center justify-between p-2 bg-slate-800/40 rounded-lg border border-slate-800">
                   <span className="text-slate-300">Jump to Cut</span>
                   <kbd className="px-1.5 py-0.5 bg-slate-950 text-indigo-300 rounded font-mono text-[11px] border border-slate-700">↑ / ↓</kbd>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-800/40 rounded-lg border border-slate-800">
+                  <span className="text-slate-300">Density & Diagnostics</span>
+                  <kbd className="px-1.5 py-0.5 bg-slate-950 text-indigo-300 rounded font-mono text-[11px] border border-slate-700">D</kbd>
                 </div>
               </div>
             </div>

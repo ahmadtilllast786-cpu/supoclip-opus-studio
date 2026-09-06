@@ -18,6 +18,7 @@ import {
   SfxTrackItem,
   TranscriptWord,
   CaptionTemplate,
+  DiagnosticSettings,
 } from '../../types/timeline';
 import { renderCompositedFrame } from '../../core/video/canvasRenderer';
 import { playSfxInstant } from '../../core/audio/sfxSynthesizer';
@@ -38,10 +39,12 @@ interface CanvasPlayerProps {
   onSelectOverlay?: (id: string) => void;
   selectedOverlayId?: string | null;
   onUpdateOverlayPos?: (id: string, x: number, y: number) => void;
+  onUpdateOverlayScale?: (id: string, scale: number) => void;
   onUpdateCaptionPosition?: (x: number, y: number) => void;
   words?: TranscriptWord[];
   captionTemplate?: CaptionTemplate;
   hookTitle?: string | null;
+  diagnosticSettings?: DiagnosticSettings;
 }
 
 export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
@@ -58,20 +61,37 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   onSelectOverlay,
   selectedOverlayId,
   onUpdateOverlayPos,
+  onUpdateOverlayScale,
   onUpdateCaptionPosition,
   words = [],
   captionTemplate,
   hookTitle,
+  diagnosticSettings,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isDraggingOverlay, setIsDraggingOverlay] = useState(false);
+  const [overlayDragOffset, setOverlayDragOffset] = useState({ x: 0, y: 0 });
+  const [hoveredOverlayId, setHoveredOverlayId] = useState<string | null>(null);
+  const [isResizingOverlay, setIsResizingOverlay] = useState(false);
   const [isHoveringCaption, setIsHoveringCaption] = useState(false);
   const [isDraggingCaption, setIsDraggingCaption] = useState(false);
   const [captionDragOffset, setCaptionDragOffset] = useState({ x: 0, y: 0 });
   const lastTriggeredSfxRef = useRef<Set<string>>(new Set());
+  const lastSfxTriggerTimeRef = useRef(0);
   const lastStateUpdateTimeRef = useRef(0);
+  const resizeInitialDataRef = useRef<{
+    initialScale: number;
+    initialDistance: number;
+    centerX: number;
+    centerY: number;
+  }>({
+    initialScale: 1,
+    initialDistance: 1,
+    centerX: 50,
+    centerY: 50,
+  });
 
   // Mutable state refs to prevent re-instantiating RAF loop on every frame
   const currentTimeRef = useRef(currentTime);
@@ -237,13 +257,20 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
           });
         }
 
-        // Trigger synchronized SFX nodes without React state delay
+        // Trigger synchronized SFX nodes without React state delay, respecting diagnostic throttle and master mute
+        const throttleMs = diagnosticSettings?.sfxThrottleIntervalMs ?? 200;
+        const masterSfxMuted = diagnosticSettings?.masterSfxMuted ?? false;
+
         curSfx.forEach((sfx) => {
           if (time >= sfx.startTimelineTime && time < sfx.startTimelineTime + 0.15) {
             if (!lastTriggeredSfxRef.current.has(sfx.id)) {
               lastTriggeredSfxRef.current.add(sfx.id);
-              if (!isMutedRef.current && !sfx.isMuted) {
-                playSfxInstant(sfx.preset, sfx.volume);
+              const now = performance.now();
+              if (!isMutedRef.current && !masterSfxMuted && !sfx.isMuted) {
+                if (now - lastSfxTriggerTimeRef.current >= throttleMs) {
+                  lastSfxTriggerTimeRef.current = now;
+                  playSfxInstant(sfx.preset, sfx.volume);
+                }
               }
             }
           } else if (time < sfx.startTimelineTime) {
@@ -277,6 +304,9 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
             captionTemplate,
             hookTitle,
             sfxTracks,
+            masterOverlayVisible: diagnosticSettings?.masterOverlayVisible ?? true,
+            maxActiveOverlays: diagnosticSettings?.maxActiveOverlays ?? 5,
+            masterSfxMuted: diagnosticSettings?.masterSfxMuted ?? false,
           });
         }
       }
@@ -286,7 +316,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
 
     animationFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [totalDuration, targetWidth, targetHeight, overlays, zoomKeyframes, words, captionTemplate, hookTitle, setCurrentTime, setIsPlaying]);
+  }, [totalDuration, targetWidth, targetHeight, overlays, zoomKeyframes, words, captionTemplate, hookTitle, setCurrentTime, setIsPlaying, diagnosticSettings]);
 
   // 2. Handle scrubbing / seek when paused
   useEffect(() => {
@@ -340,6 +370,57 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [totalDuration, setIsPlaying, setCurrentTime]);
 
+  // Overlay resize handlers via pointer events
+  const handleResizeStart = (
+    e: React.PointerEvent,
+    handle: 'nw' | 'ne' | 'sw' | 'se',
+    ov: StickerOverlay
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    setIsResizingOverlay(true);
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const pointerX = ((e.clientX - rect.left) / rect.width) * 100;
+    const pointerY = ((e.clientY - rect.top) / rect.height) * 100;
+
+    const initialDistance = Math.max(1, Math.hypot(pointerX - ov.x, pointerY - ov.y));
+
+    resizeInitialDataRef.current = {
+      initialScale: ov.scale || 1.0,
+      initialDistance,
+      centerX: ov.x,
+      centerY: ov.y,
+    };
+  };
+
+  const handleResizePointerMove = (e: React.PointerEvent) => {
+    if (!isResizingOverlay || !selectedOverlayId || !onUpdateOverlayScale) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const pointerX = ((e.clientX - rect.left) / rect.width) * 100;
+    const pointerY = ((e.clientY - rect.top) / rect.height) * 100;
+
+    const { initialScale, initialDistance, centerX, centerY } = resizeInitialDataRef.current;
+    const curDistance = Math.hypot(pointerX - centerX, pointerY - centerY);
+    const ratio = curDistance / initialDistance;
+    const newScale = Math.max(0.4, Math.min(3.0, initialScale * ratio));
+    onUpdateOverlayScale(selectedOverlayId, Number(newScale.toFixed(2)));
+  };
+
+  const handleResizePointerUp = (e: React.PointerEvent) => {
+    setIsResizingOverlay(false);
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+  };
+
   // Handle overlay & caption drag on canvas
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -367,19 +448,26 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     }
 
     // 2. Check if clicked near an active sticker overlay
-    const activeOverlays = overlays.filter(
-      (ov) => currentTime >= ov.startTimelineTime && currentTime < ov.startTimelineTime + ov.duration
-    );
+    if (diagnosticSettings?.masterOverlayVisible !== false) {
+      const activeOverlays = overlays.filter(
+        (ov) =>
+          !ov.isDisabled &&
+          currentTime >= ov.startTimelineTime &&
+          currentTime < ov.startTimelineTime + ov.duration
+      );
 
-    const hit = activeOverlays.find((ov) => {
-      const dx = ov.x - clickX;
-      const dy = ov.y - clickY;
-      return Math.sqrt(dx * dx + dy * dy) < 14;
-    });
+      const hit = activeOverlays.find((ov) => {
+        const scale = ov.scale || 1.0;
+        const halfW = 9 * scale;
+        const halfH = 9 * scale;
+        return Math.abs(ov.x - clickX) <= halfW + 2 && Math.abs(ov.y - clickY) <= halfH + 2;
+      });
 
-    if (hit) {
-      if (onSelectOverlay) onSelectOverlay(hit.id);
-      setIsDraggingOverlay(true);
+      if (hit) {
+        if (onSelectOverlay) onSelectOverlay(hit.id);
+        setIsDraggingOverlay(true);
+        setOverlayDragOffset({ x: clickX - hit.x, y: clickY - hit.y });
+      }
     }
   };
 
@@ -401,8 +489,8 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
 
     // If dragging sticker overlay
     if (isDraggingOverlay && selectedOverlayId && onUpdateOverlayPos) {
-      const newX = Math.max(5, Math.min(95, mouseX));
-      const newY = Math.max(5, Math.min(95, mouseY));
+      const newX = Math.max(5, Math.min(95, mouseX - overlayDragOffset.x));
+      const newY = Math.max(5, Math.min(95, mouseY - overlayDragOffset.y));
       onUpdateOverlayPos(selectedOverlayId, Math.round(newX), Math.round(newY));
       return;
     }
@@ -417,6 +505,25 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       mouseY <= subBounds.y + subBounds.height + 3
     );
     setIsHoveringCaption(isOver);
+
+    // Detect hovering over active overlays
+    if (diagnosticSettings?.masterOverlayVisible !== false) {
+      const activeOverlays = overlays.filter(
+        (ov) =>
+          !ov.isDisabled &&
+          currentTime >= ov.startTimelineTime &&
+          currentTime < ov.startTimelineTime + ov.duration
+      );
+      const hovered = activeOverlays.find((ov) => {
+        const scale = ov.scale || 1.0;
+        const halfW = 9 * scale;
+        const halfH = 9 * scale;
+        return Math.abs(ov.x - mouseX) <= halfW + 2 && Math.abs(ov.y - mouseY) <= halfH + 2;
+      });
+      setHoveredOverlayId(hovered ? hovered.id : null);
+    } else {
+      setHoveredOverlayId(null);
+    }
   };
 
   const handleCanvasMouseUp = () => {
@@ -428,6 +535,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     setIsDraggingCaption(false);
     setIsDraggingOverlay(false);
     setIsHoveringCaption(false);
+    setHoveredOverlayId(null);
   };
 
   return (
@@ -466,15 +574,19 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
           onMouseUp={handleCanvasMouseUp}
           onMouseLeave={handleCanvasMouseLeave}
           className={`w-full h-full object-contain ${
-            isDraggingCaption
+            isDraggingCaption || isDraggingOverlay || isResizingOverlay
               ? 'cursor-grabbing'
-              : isHoveringCaption
+              : isHoveringCaption || hoveredOverlayId
               ? 'cursor-grab'
-              : isDraggingOverlay
-              ? 'cursor-grabbing'
               : 'cursor-crosshair'
           }`}
-          title={isHoveringCaption ? 'Click and drag captions anywhere' : 'Click to reposition captions or stickers'}
+          title={
+            isHoveringCaption
+              ? 'Click and drag captions anywhere'
+              : hoveredOverlayId
+              ? 'Click and drag sticker to reposition'
+              : 'Click to reposition captions or stickers'
+          }
         />
 
         {/* Interactive Caption Drag Bounding Box & Handles */}
@@ -510,6 +622,92 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
             </div>
           </div>
         )}
+
+        {/* Interactive Sticker Overlay Drag & Selection Bounding Box with Corner Resize Handles */}
+        {(() => {
+          if (diagnosticSettings?.masterOverlayVisible === false) return null;
+          const activeSelectedOverlay = overlays.find(
+            (ov) =>
+              ov.id === selectedOverlayId &&
+              currentTime >= ov.startTimelineTime &&
+              currentTime < ov.startTimelineTime + ov.duration &&
+              !ov.isDisabled
+          );
+          if (!activeSelectedOverlay) return null;
+
+          const scale = activeSelectedOverlay.scale || 1.0;
+          const boxW = Math.max(12, 18 * scale);
+          const boxH = Math.max(12, 18 * scale);
+          const boxLeft = activeSelectedOverlay.x - boxW / 2;
+          const boxTop = activeSelectedOverlay.y - boxH / 2;
+
+          return (
+            <div
+              className={`absolute rounded-xl transition-all duration-75 border-2 pointer-events-none ${
+                isDraggingOverlay || isResizingOverlay
+                  ? 'border-pink-500 bg-pink-500/15 shadow-xl shadow-pink-500/30 ring-2 ring-pink-400/40'
+                  : 'border-pink-400 border-dashed bg-pink-500/5 shadow-md shadow-pink-950/40'
+              }`}
+              style={{
+                left: `${boxLeft}%`,
+                top: `${boxTop}%`,
+                width: `${boxW}%`,
+                height: `${boxH}%`,
+              }}
+            >
+              {/* Top-Left Resize Handle */}
+              <div
+                onPointerDown={(e) => handleResizeStart(e, 'nw', activeSelectedOverlay)}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={handleResizePointerUp}
+                onPointerCancel={handleResizePointerUp}
+                title="Drag to resize overlay scale"
+                className="absolute -top-2 -left-2 w-4 h-4 bg-white border-2 border-pink-600 rounded-full shadow cursor-nwse-resize pointer-events-auto hover:scale-125 transition-transform"
+              />
+
+              {/* Top-Right Resize Handle */}
+              <div
+                onPointerDown={(e) => handleResizeStart(e, 'ne', activeSelectedOverlay)}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={handleResizePointerUp}
+                onPointerCancel={handleResizePointerUp}
+                title="Drag to resize overlay scale"
+                className="absolute -top-2 -right-2 w-4 h-4 bg-white border-2 border-pink-600 rounded-full shadow cursor-nesw-resize pointer-events-auto hover:scale-125 transition-transform"
+              />
+
+              {/* Bottom-Left Resize Handle */}
+              <div
+                onPointerDown={(e) => handleResizeStart(e, 'sw', activeSelectedOverlay)}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={handleResizePointerUp}
+                onPointerCancel={handleResizePointerUp}
+                title="Drag to resize overlay scale"
+                className="absolute -bottom-2 -left-2 w-4 h-4 bg-white border-2 border-pink-600 rounded-full shadow cursor-nesw-resize pointer-events-auto hover:scale-125 transition-transform"
+              />
+
+              {/* Bottom-Right Resize Handle */}
+              <div
+                onPointerDown={(e) => handleResizeStart(e, 'se', activeSelectedOverlay)}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={handleResizePointerUp}
+                onPointerCancel={handleResizePointerUp}
+                title="Drag to resize overlay scale"
+                className="absolute -bottom-2 -right-2 w-4 h-4 bg-white border-2 border-pink-600 rounded-full shadow cursor-nwse-resize pointer-events-auto hover:scale-125 transition-transform"
+              />
+
+              {/* HUD Coordinates & Scale Readout Badge */}
+              <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-950/95 text-white font-mono text-[9px] px-2.5 py-0.5 rounded-full border border-pink-500/60 shadow flex items-center space-x-1.5 whitespace-nowrap pointer-events-none">
+                <span className="text-pink-300 font-sans font-bold">
+                  {activeSelectedOverlay.emoji} {activeSelectedOverlay.label}
+                </span>
+                <span className="text-slate-500">·</span>
+                <span className="text-cyan-400 font-bold">X:{activeSelectedOverlay.x}%</span>
+                <span className="text-indigo-400 font-bold">Y:{activeSelectedOverlay.y}%</span>
+                <span className="text-amber-400 font-bold">{scale.toFixed(2)}x</span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Punch Zoom Target Crosshair Overlay if Zoom is active */}
         {punchZoom.isActive && (
