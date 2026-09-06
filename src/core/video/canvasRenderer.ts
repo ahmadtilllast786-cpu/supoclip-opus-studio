@@ -17,6 +17,7 @@ export interface RenderFrameOptions {
   overlays: StickerOverlay[];
   zoomKeyframes: DynamicZoomKeyframe[];
   videoElements: Map<string, HTMLVideoElement>;
+  imageElements?: Map<string, HTMLImageElement>;
   width: number;
   height: number;
   words?: TranscriptWord[];
@@ -31,7 +32,8 @@ export interface RenderFrameOptions {
 
 /**
  * Composites and draws the complete video frame at the given timeline time,
- * including SupoClip caption templates, hook titles, punch zooms, and transitions.
+ * including V1 main clips, V2 overlay/B-roll clips, SupoClip caption templates,
+ * hook titles, punch zooms, and transitions.
  */
 export function renderCompositedFrame(
   ctx: CanvasRenderingContext2D,
@@ -43,6 +45,7 @@ export function renderCompositedFrame(
     overlays,
     zoomKeyframes,
     videoElements,
+    imageElements,
     width,
     height,
     words = [],
@@ -61,12 +64,39 @@ export function renderCompositedFrame(
   ctx.fillStyle = '#05070a';
   ctx.fillRect(0, 0, width, height);
 
-  // 1. Locate current video clip and check for transition overlap
-  let currentClipIndex = -1;
-  for (let i = 0; i < clips.length; i++) {
-    const c = clips[i];
+  // Helper to obtain media source for any clip (video or photo)
+  const getMediaSourceForClip = (clip: VideoClip): CanvasImageSource | null => {
+    if (clip.mediaType === 'image') {
+      const img = imageElements?.get(clip.id);
+      if (img && img.complete && img.naturalWidth > 0) return img;
+      // Fallback: try loading image dynamically if not cached
+      if (clip.sourceUrl) {
+        let cachedImg = (clip as any)._cachedImg as HTMLImageElement | undefined;
+        if (!cachedImg) {
+          cachedImg = new Image();
+          cachedImg.crossOrigin = 'anonymous';
+          cachedImg.src = clip.sourceUrl;
+          (clip as any)._cachedImg = cachedImg;
+        }
+        if (cachedImg.complete && cachedImg.naturalWidth > 0) return cachedImg;
+      }
+      return null;
+    }
+    const vid = videoElements.get(clip.id);
+    if (vid && (vid.readyState >= 1 || vid.videoWidth > 0)) return vid;
+    return null;
+  };
+
+  // Separate clips into V1 (main track) and V2 (overlay / B-roll track)
+  const v1Clips = clips.filter((c) => (c.trackId || 'v1') === 'v1');
+  const v2Clips = clips.filter((c) => c.trackId === 'v2');
+
+  // Locate current V1 clip
+  let currentV1Index = -1;
+  for (let i = 0; i < v1Clips.length; i++) {
+    const c = v1Clips[i];
     if (currentTime >= c.startTimelineTime && currentTime < c.startTimelineTime + c.duration) {
-      currentClipIndex = i;
+      currentV1Index = i;
       break;
     }
   }
@@ -82,8 +112,8 @@ export function renderCompositedFrame(
   let focusX = zoomTransform.centerX;
   let focusY = zoomTransform.centerY;
 
-  if (currentClipIndex >= 0) {
-    const activeClip = clips[currentClipIndex];
+  if (currentV1Index >= 0) {
+    const activeClip = v1Clips[currentV1Index];
     if (activeClip.zoomScale && activeClip.zoomScale !== 1.0) {
       effectiveScale *= activeClip.zoomScale;
       focusX = activeClip.zoomCenter.x;
@@ -103,10 +133,10 @@ export function renderCompositedFrame(
     ctx.translate(-originX, -originY);
   }
 
-  // Draw video layer
-  if (currentClipIndex >= 0) {
-    const currentClip = clips[currentClipIndex];
-    const nextClip = clips[currentClipIndex + 1];
+  // 1A. Draw V1 (Main Track) Layer
+  if (currentV1Index >= 0) {
+    const currentClip = v1Clips[currentV1Index];
+    const nextClip = v1Clips[currentV1Index + 1];
 
     const timeIntoCurrent = currentTime - currentClip.startTimelineTime;
     const timeLeftInCurrent = currentClip.duration - timeIntoCurrent;
@@ -119,40 +149,50 @@ export function renderCompositedFrame(
       nextClip.transitionIn !== 'none' &&
       timeLeftInCurrent <= transitionDuration;
 
-    if (hasTransition) {
-      // Transition state: draw both outgoing and incoming frames
-      const outVideo = videoElements.get(currentClip.id);
-      const inVideo = videoElements.get(nextClip.id);
+    const outMedia = getMediaSourceForClip(currentClip);
 
-      if (outVideo && inVideo) {
+    if (hasTransition) {
+      const inMedia = nextClip ? getMediaSourceForClip(nextClip) : null;
+      if (outMedia && inMedia) {
         const transProgress = 1 - timeLeftInCurrent / transitionDuration;
-        drawTransitionedClips(
+        drawTransitionedMedia(
           ctx,
-          outVideo,
-          inVideo,
+          outMedia,
+          inMedia,
           transProgress,
           nextClip.transitionIn,
           width,
           height
         );
-      } else if (outVideo) {
-        drawCroppedVideo(ctx, outVideo, width, height);
+      } else if (outMedia) {
+        drawCroppedMedia(ctx, outMedia, width, height);
       }
+    } else if (outMedia) {
+      drawCroppedMedia(ctx, outMedia, width, height);
     } else {
-      // Normal single clip playback
-      const videoEl = videoElements.get(currentClip.id);
-      if (videoEl && (videoEl.readyState >= 1 || videoEl.videoWidth > 0)) {
-        try {
-          drawCroppedVideo(ctx, videoEl, width, height);
-        } catch {
-          drawClipPlaceholder(ctx, currentClip.name, width, height);
-        }
-      } else {
-        drawClipPlaceholder(ctx, currentClip.name, width, height);
-      }
+      drawClipPlaceholder(ctx, currentClip.name, width, height);
     }
   } else {
-    drawEmptyScreen(ctx, width, height);
+    // If no active V1 clip, check if there is an active V2 clip, else show empty screen
+    const hasV2Active = v2Clips.some(
+      (c) => currentTime >= c.startTimelineTime && currentTime < c.startTimelineTime + c.duration
+    );
+    if (!hasV2Active) {
+      drawEmptyScreen(ctx, width, height);
+    }
+  }
+
+  // 1B. Draw V2 (Overlays / B-roll Track) Visual Layer on top of V1
+  const activeV2Clips = v2Clips.filter(
+    (c) => currentTime >= c.startTimelineTime && currentTime < c.startTimelineTime + c.duration
+  );
+  for (const v2Clip of activeV2Clips) {
+    const v2Media = getMediaSourceForClip(v2Clip);
+    if (v2Media) {
+      drawCroppedMedia(ctx, v2Media, width, height);
+    } else {
+      drawClipPlaceholder(ctx, v2Clip.name, width, height);
+    }
   }
 
   ctx.restore(); // Restore punch-zoom transform
@@ -201,43 +241,64 @@ export function renderCompositedFrame(
 }
 
 /**
- * Draws a video element cropped and scaled to fit the 9:16 vertical canvas (cover mode).
+ * Draws a video or image element cropped and scaled to fit the vertical canvas (cover mode).
  */
-function drawCroppedVideo(
+export function drawCroppedMedia(
   ctx: CanvasRenderingContext2D,
-  video: HTMLVideoElement,
+  media: CanvasImageSource,
   canvasWidth: number,
   canvasHeight: number
 ) {
-  const vWidth = video.videoWidth || 1920;
-  const vHeight = video.videoHeight || 1080;
+  let mWidth = 1920;
+  let mHeight = 1080;
+
+  if ('videoWidth' in media && (media as HTMLVideoElement).videoWidth) {
+    mWidth = (media as HTMLVideoElement).videoWidth;
+    mHeight = (media as HTMLVideoElement).videoHeight;
+  } else if ('naturalWidth' in media && (media as HTMLImageElement).naturalWidth) {
+    mWidth = (media as HTMLImageElement).naturalWidth;
+    mHeight = (media as HTMLImageElement).naturalHeight;
+  } else if ('width' in media && typeof (media as any).width === 'number') {
+    mWidth = (media as any).width || 1920;
+    mHeight = (media as any).height || 1080;
+  }
 
   const canvasRatio = canvasWidth / canvasHeight;
-  const videoRatio = vWidth / vHeight;
+  const mediaRatio = mWidth / mHeight;
 
   let sx = 0,
     sy = 0,
-    sWidth = vWidth,
-    sHeight = vHeight;
+    sWidth = mWidth,
+    sHeight = mHeight;
 
-  if (videoRatio > canvasRatio) {
-    // Video is wider than canvas: crop sides
-    sWidth = vHeight * canvasRatio;
-    sx = (vWidth - sWidth) / 2;
+  if (mediaRatio > canvasRatio) {
+    // Media is wider than canvas: crop sides
+    sWidth = mHeight * canvasRatio;
+    sx = (mWidth - sWidth) / 2;
   } else {
-    // Video is taller than canvas: crop top/bottom
-    sHeight = vWidth / canvasRatio;
-    sy = (vHeight - sHeight) / 2;
+    // Media is taller than canvas: crop top/bottom
+    sHeight = mWidth / canvasRatio;
+    sy = (mHeight - sHeight) / 2;
   }
 
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
 
   try {
-    ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
+    ctx.drawImage(media, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
   } catch {
     // Gracefully ignore if browser frame decode is transiently locked
   }
+}
+
+// Backwards compatibility alias
+export function drawCroppedVideo(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  canvasWidth: number,
+  canvasHeight: number
+) {
+  drawCroppedMedia(ctx, video, canvasWidth, canvasHeight);
 }
 
 let cachedOff1: HTMLCanvasElement | null = null;
@@ -264,12 +325,12 @@ function getCachedTransitionCanvases(width: number, height: number): [HTMLCanvas
 }
 
 /**
- * Draws two clips with a canvas transition effect.
+ * Draws two media sources (video or image) with a canvas transition effect.
  */
-function drawTransitionedClips(
+export function drawTransitionedMedia(
   ctx: CanvasRenderingContext2D,
-  outgoingVideo: HTMLVideoElement,
-  incomingVideo: HTMLVideoElement,
+  outgoingMedia: CanvasImageSource,
+  incomingMedia: CanvasImageSource,
   progress: number,
   transition: any,
   width: number,
@@ -282,9 +343,7 @@ function drawTransitionedClips(
     ctx1.imageSmoothingEnabled = true;
     ctx1.imageSmoothingQuality = 'high';
     ctx1.clearRect(0, 0, width, height);
-    if (outgoingVideo.readyState >= 1 || outgoingVideo.videoWidth > 0) {
-      drawCroppedVideo(ctx1, outgoingVideo, width, height);
-    }
+    drawCroppedMedia(ctx1, outgoingMedia, width, height);
   }
 
   const ctx2 = off2.getContext('2d');
@@ -292,15 +351,23 @@ function drawTransitionedClips(
     ctx2.imageSmoothingEnabled = true;
     ctx2.imageSmoothingQuality = 'high';
     ctx2.clearRect(0, 0, width, height);
-    if (incomingVideo.readyState >= 1 || incomingVideo.videoWidth > 0) {
-      drawCroppedVideo(ctx2, incomingVideo, width, height);
-    } else if (ctx1) {
-      // If incoming frame not yet ready, draw outgoing so no black flash occurs
-      drawCroppedVideo(ctx2, outgoingVideo, width, height);
-    }
+    drawCroppedMedia(ctx2, incomingMedia, width, height);
   }
 
   renderTransition(ctx, off1, off2, progress, transition, width, height);
+}
+
+// Backwards compatibility alias
+export function drawTransitionedClips(
+  ctx: CanvasRenderingContext2D,
+  outgoingVideo: HTMLVideoElement,
+  incomingVideo: HTMLVideoElement,
+  progress: number,
+  transition: any,
+  width: number,
+  height: number
+) {
+  drawTransitionedMedia(ctx, outgoingVideo, incomingVideo, progress, transition, width, height);
 }
 
 /**

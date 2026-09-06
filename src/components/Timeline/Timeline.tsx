@@ -32,6 +32,7 @@ import {
   CaptionTrackItem,
   TranscriptWord,
   DiagnosticSettings,
+  MediaAsset,
 } from '../../types/timeline';
 import { extractClipWaveformSegment } from '../../core/audio/audioAnalyzer';
 import {
@@ -204,8 +205,14 @@ export const Timeline: React.FC<TimelineProps> = ({
     initialStartTime: number;
     duration: number;
     startX: number;
+    startY: number;
     currentStartTime: number;
+    initialTrack: 'c1' | 'v2' | 'v1' | 'a1' | 'a2';
+    targetTrack: 'c1' | 'v2' | 'v1' | 'a1' | 'a2';
+    mediaType?: 'video' | 'image';
+    name?: string;
   } | null>(null);
+  const draggingStateRef = useRef<typeof draggingItem>(null);
 
   // Active Drop Zone Highlight State
   const [dragOverTrack, setDragOverTrack] = useState<'c1' | 'v2' | 'v1' | 'a2' | null>(null);
@@ -774,7 +781,20 @@ export const Timeline: React.FC<TimelineProps> = ({
         setClips((prevClips) =>
           prevClips.map((c) => {
             if (c.id !== clipId) return c;
+            const isImage = c.mediaType === 'image';
             if (edge === 'left') {
+              if (isImage) {
+                const maxDelta = c.duration - 0.2;
+                const appliedDeltaSec = Math.max(-c.startTimelineTime, Math.min(maxDelta, deltaSec));
+                const newStart = Math.max(0, c.startTimelineTime + appliedDeltaSec);
+                const newDuration = Math.max(0.2, c.duration - appliedDeltaSec);
+                return {
+                  ...c,
+                  startTimelineTime: newStart,
+                  duration: newDuration,
+                  outPoint: newDuration,
+                };
+              }
               const newInPoint = Math.max(
                 0,
                 Math.min(clip.outPoint - 0.3 * clip.speed, clip.inPoint + deltaSec * clip.speed)
@@ -789,6 +809,15 @@ export const Timeline: React.FC<TimelineProps> = ({
                 startTimelineTime: newStart,
               };
             } else {
+              if (isImage) {
+                // Photos can expand freely without video file duration limits!
+                const newDuration = Math.max(0.2, clip.duration + deltaSec);
+                return {
+                  ...c,
+                  duration: newDuration,
+                  outPoint: newDuration,
+                };
+              }
               const newOutPoint = Math.min(
                 clip.originalDuration,
                 Math.max(clip.inPoint + 0.3 * clip.speed, clip.outPoint + deltaSec * clip.speed)
@@ -876,19 +905,41 @@ export const Timeline: React.FC<TimelineProps> = ({
     }
 
     const startX = e.clientX;
+    const startY = e.clientY;
 
-    setDraggingItem({
+    let initialTrack: 'c1' | 'v2' | 'v1' | 'a1' | 'a2' = 'v1';
+    let clipItem: VideoClip | undefined;
+    if (type === 'clip') {
+      clipItem = clips.find((c) => c.id === id);
+      initialTrack = clipItem?.trackId || 'v1';
+    } else if (type === 'overlay') {
+      initialTrack = 'v2';
+    } else if (type === 'caption') {
+      initialTrack = 'c1';
+    } else if (type === 'sfx') {
+      initialTrack = 'a2';
+    }
+
+    const dragInitState = {
       id,
       type,
       initialStartTime,
       duration,
       startX,
+      startY,
       currentStartTime: initialStartTime,
-    });
+      initialTrack,
+      targetTrack: initialTrack,
+      mediaType: clipItem?.mediaType,
+      name: clipItem?.name,
+    };
+
+    setDraggingItem(dragInitState);
+    draggingStateRef.current = dragInitState;
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const deltaPx = moveEvent.clientX - startX;
-      if (Math.abs(deltaPx) > 3) {
+      if (Math.abs(deltaPx) > 3 || Math.abs(moveEvent.clientY - startY) > 3) {
         hasMovedRef.current = true;
       }
 
@@ -897,7 +948,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         const deltaSec = deltaPx / pixelsPerSecond;
         let newStart = Math.max(0, initialStartTime + deltaSec);
 
-        // Magnetic Snapping along Time Axis
+        // Magnetic Snapping along Time Axis (When snapping is enabled)
         if (isSnappingEnabled) {
           const snapThresholdSec = 10 / pixelsPerSecond;
           const snapPoints = getSnapPoints().filter((p) => {
@@ -936,12 +987,43 @@ export const Timeline: React.FC<TimelineProps> = ({
           setSnapGuideTime(null);
         }
 
-        setDraggingItem((prev) => (prev ? { ...prev, currentStartTime: newStart } : null));
+        // Cross-track vertical lane detection under pointer
+        const hoveredElem = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+        const laneElem = hoveredElem?.closest('[data-track-lane]') as HTMLElement | null;
+        const detectedLane = laneElem?.dataset?.trackLane as 'c1' | 'v2' | 'v1' | 'a1' | 'a2' | undefined;
+
+        let targetTrack = draggingStateRef.current?.targetTrack || initialTrack;
+        if (type === 'clip') {
+          // Visual clips (photos and video B-roll) can move freely between V1 and V2
+          if (detectedLane === 'v1' || detectedLane === 'v2') {
+            targetTrack = detectedLane;
+          }
+        } else if (type === 'overlay') {
+          if (detectedLane === 'v2') {
+            targetTrack = 'v2';
+          }
+        }
+
+        const updatedDrag = {
+          ...draggingStateRef.current!,
+          currentStartTime: newStart,
+          targetTrack,
+        };
+        draggingStateRef.current = updatedDrag;
+        setDraggingItem(updatedDrag);
 
         // Live-update position in state for buttery smooth responsiveness
         if (type === 'clip') {
           setClips((prev) =>
-            prev.map((c) => (c.id === id ? { ...c, startTimelineTime: newStart } : c))
+            prev.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    startTimelineTime: newStart,
+                    trackId: targetTrack === 'v2' ? 'v2' : 'v1',
+                  }
+                : c
+            )
           );
         } else if (type === 'overlay') {
           setOverlays((prev) =>
@@ -966,13 +1048,31 @@ export const Timeline: React.FC<TimelineProps> = ({
       try {
         currentTarget.releasePointerCapture(e.pointerId);
       } catch {}
-      if (type === 'caption' && setWords && setCaptions) {
-        setCaptions((curr) => {
-          setWords(flattenCaptionsToWords(curr));
-          return curr;
-        });
+
+      const finalDrag = draggingStateRef.current;
+      if (finalDrag) {
+        if (type === 'clip') {
+          setClips((prev) =>
+            prev.map((c) =>
+              c.id === id
+                ? {
+                    ...c,
+                    startTimelineTime: finalDrag.currentStartTime,
+                    trackId: finalDrag.targetTrack === 'v2' ? 'v2' : 'v1',
+                  }
+                : c
+            )
+          );
+        } else if (type === 'caption' && setWords && setCaptions) {
+          setCaptions((curr) => {
+            setWords(flattenCaptionsToWords(curr));
+            return curr;
+          });
+        }
       }
+
       setDraggingItem(null);
+      draggingStateRef.current = null;
       setSnapGuideTime(null);
       if (rafItemDragRef.current !== null) {
         cancelAnimationFrame(rafItemDragRef.current);
@@ -1377,23 +1477,28 @@ export const Timeline: React.FC<TimelineProps> = ({
             />
           )}
 
-          {/* Floating Time Badge while Dragging Elements */}
+          {/* Floating Time & Destination Track Badge while Dragging Elements */}
           {draggingItem && (
             <div
               style={{
                 left: `${TRACK_HEADER_WIDTH + draggingItem.currentStartTime * pixelsPerSecond}px`,
                 top:
-                  draggingItem.type === 'caption'
+                  draggingItem.targetTrack === 'c1'
                     ? '32px'
-                    : draggingItem.type === 'overlay'
+                    : draggingItem.targetTrack === 'v2'
                     ? '88px'
-                    : draggingItem.type === 'clip'
-                    ? '144px'
-                    : '290px',
+                    : draggingItem.targetTrack === 'v1'
+                    ? '148px'
+                    : draggingItem.targetTrack === 'a1'
+                    ? '236px'
+                    : '292px',
               }}
               className="absolute z-50 pointer-events-none -translate-x-1/2 px-2.5 py-1 bg-indigo-600 text-white font-mono text-[11px] font-bold rounded-lg shadow-2xl border border-indigo-300/80 flex items-center gap-1.5 ring-2 ring-indigo-400/50"
             >
               <MoveHorizontal className="w-3.5 h-3.5 text-cyan-300 animate-pulse" />
+              <span className="px-1.5 py-0.2 bg-cyan-400 text-slate-950 rounded text-[9px] font-black">
+                {draggingItem.targetTrack.toUpperCase()}
+              </span>
               <span>{draggingItem.currentStartTime.toFixed(2)}s</span>
               <span className="text-indigo-200 text-[9px]">
                 ({draggingItem.currentStartTime - draggingItem.initialStartTime >= 0 ? '+' : ''}
@@ -1426,6 +1531,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
             {/* Lane Items & Dedicated Drop Zone */}
             <div
+              data-track-lane="c1"
               onDragOver={(e) => {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = 'copy';
@@ -1467,6 +1573,22 @@ export const Timeline: React.FC<TimelineProps> = ({
                   : ''
               }`}
             >
+              {/* Phantom / Ghost Drop Preview on Track C1 */}
+              {draggingItem && draggingItem.targetTrack === 'c1' && (
+                <div
+                  style={{
+                    left: `${draggingItem.currentStartTime * pixelsPerSecond}px`,
+                    width: `${Math.max(40, draggingItem.duration * pixelsPerSecond)}px`,
+                  }}
+                  className="absolute top-1 bottom-1 rounded-lg border-2 border-dashed border-amber-400 bg-amber-500/25 shadow-[0_0_15px_rgba(245,158,11,0.6)] z-30 pointer-events-none flex items-center justify-between px-2 animate-pulse"
+                >
+                  <div className="flex items-center space-x-1 font-mono text-[9px] font-bold text-amber-200">
+                    <span className="px-1 py-0.2 bg-amber-400 text-slate-950 rounded text-[8px] font-black">C1</span>
+                    <span>{draggingItem.currentStartTime.toFixed(2)}s</span>
+                  </div>
+                  <span className="text-[9px] font-mono text-amber-300 font-bold">{draggingItem.duration.toFixed(1)}s</span>
+                </div>
+              )}
               {(captions || []).map((cap) => {
                 const isSelected = selectedCaptionId === cap.id;
                 const leftPx = cap.startTime * pixelsPerSecond;
@@ -1697,6 +1819,36 @@ export const Timeline: React.FC<TimelineProps> = ({
                   const rawData = e.dataTransfer.getData('application/json');
                   if (rawData) {
                     const parsed = JSON.parse(rawData);
+                    if (parsed.type === 'media-asset' && parsed.asset) {
+                      const asset = parsed.asset as MediaAsset;
+                      const isImage = asset.type === 'image';
+                      const newClip: VideoClip = {
+                        id: `clip-${isImage ? 'img' : 'vid'}-${Date.now()}`,
+                        name: asset.name,
+                        mediaType: asset.type,
+                        trackId: 'v2',
+                        sourceUrl: asset.sourceUrl,
+                        blob: asset.blob,
+                        thumbnailUrl: asset.thumbnailUrl,
+                        originalDuration: isImage ? 60 : asset.duration,
+                        inPoint: 0,
+                        outPoint: isImage ? 3.0 : asset.duration,
+                        duration: isImage ? 3.0 : asset.duration,
+                        startTimelineTime: dropSec,
+                        speed: 1.0,
+                        volume: isImage ? 0 : 1.0,
+                        isMuted: isImage,
+                        zoomScale: 1.0,
+                        zoomCenter: { x: 0.5, y: 0.5 },
+                        transitionIn: 'none',
+                        transitionDuration: 0.25,
+                        waveform: asset.waveform || [],
+                        audioBuffer: asset.audioBuffer,
+                      };
+                      setClips((prev) => [...prev, newClip]);
+                      setSelectedClipId(newClip.id);
+                      return;
+                    }
                     if (parsed.type === 'sticker' && parsed.item) {
                       const item = parsed.item;
                       const newOverlay: StickerOverlay = {
@@ -1734,15 +1886,34 @@ export const Timeline: React.FC<TimelineProps> = ({
                     }
                   }
                 } catch (err) {
-                  console.error('Failed to parse dropped overlay:', err);
+                  console.error('Failed to parse dropped item on V2:', err);
                 }
               }}
+              data-track-lane="v2"
               className={`relative flex-1 h-full flex items-center transition-all ${
                 dragOverTrack === 'v2'
                   ? 'bg-purple-950/40 ring-2 ring-purple-400/80 ring-inset'
                   : ''
               }`}
             >
+              {/* Phantom / Ghost Drop Preview on Track V2 */}
+              {draggingItem && draggingItem.targetTrack === 'v2' && (
+                <div
+                  style={{
+                    left: `${draggingItem.currentStartTime * pixelsPerSecond}px`,
+                    width: `${Math.max(40, draggingItem.duration * pixelsPerSecond)}px`,
+                  }}
+                  className="absolute top-1 bottom-1 rounded-lg border-2 border-dashed border-purple-400 bg-purple-500/25 shadow-[0_0_15px_rgba(168,85,247,0.6)] z-30 pointer-events-none flex items-center justify-between px-2 animate-pulse"
+                >
+                  <div className="flex items-center space-x-1 font-mono text-[9px] font-bold text-purple-200">
+                    <span className="px-1 py-0.2 bg-purple-400 text-slate-950 rounded text-[8px] font-black">V2</span>
+                    <span>{draggingItem.currentStartTime.toFixed(2)}s</span>
+                  </div>
+                  <span className="text-[9px] font-mono text-purple-300 font-bold">{draggingItem.duration.toFixed(1)}s</span>
+                </div>
+              )}
+
+              {/* 1. Stickers & Text Overlays on Track V2 */}
               {overlays.map((ov) => {
                 const isSelected = selectedOverlayId === ov.id;
                 const leftPx = ov.startTimelineTime * pixelsPerSecond;
@@ -1845,6 +2016,93 @@ export const Timeline: React.FC<TimelineProps> = ({
                   </div>
                 );
               })}
+
+              {/* 2. Visual Clips & Photos Placed on Track V2 (Overlays / B-roll) */}
+              {clips
+                .filter((c) => c.trackId === 'v2')
+                .map((clip) => {
+                  const isSelected = selectedClipId === clip.id;
+                  const leftPx = clip.startTimelineTime * pixelsPerSecond;
+                  const widthPx = Math.max(40, clip.duration * pixelsPerSecond);
+                  const isImage = clip.mediaType === 'image';
+
+                  return (
+                    <div
+                      key={clip.id}
+                      data-no-scrub="true"
+                      onPointerDown={(e) =>
+                        handleItemDragStart(e, clip.id, 'clip', clip.startTimelineTime, clip.duration)
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (hasMovedRef.current) return;
+                        if (toolMode === 'select' && !isOverlayLocked) {
+                          setSelectedClipId(clip.id);
+                          setSelectedOverlayId(null);
+                          if (setSelectedSfxId) setSelectedSfxId(null);
+                        }
+                      }}
+                      style={{
+                        left: `${leftPx}px`,
+                        width: `${widthPx}px`,
+                      }}
+                      className={`absolute h-10 rounded-lg flex items-center px-1.5 border-2 transition-all shadow-md select-none group z-15 ${
+                        toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                      } ${
+                        isSelected
+                          ? 'bg-purple-900/90 border-cyan-400 ring-2 ring-cyan-400/60 shadow-purple-950/80 z-20'
+                          : 'bg-purple-950/80 border-purple-600/70 hover:border-purple-400 z-10'
+                      }`}
+                    >
+                      {/* Left Trim Handle */}
+                      {!isOverlayLocked && (
+                        <div
+                          data-trim-handle="true"
+                          onPointerDown={(e) => handleTrimStart(e, clip.id, 'left')}
+                          title="Trim Start"
+                          className="absolute left-0 top-0 bottom-0 w-2.5 bg-purple-500/30 hover:bg-cyan-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-purple-500/60"
+                        >
+                          <div className="w-0.5 h-3 bg-white/80 rounded" />
+                        </div>
+                      )}
+
+                      {/* Media Preview & Badge */}
+                      <div className="flex items-center space-x-1.5 overflow-hidden pl-1 flex-1">
+                        {isImage ? (
+                          <img
+                            src={clip.thumbnailUrl || clip.sourceUrl}
+                            alt={clip.name}
+                            className="w-5 h-5 rounded object-cover shrink-0"
+                          />
+                        ) : (
+                          <Film className="w-4 h-4 text-purple-300 shrink-0" />
+                        )}
+                        <span className="px-1 py-0.2 bg-purple-500/30 text-purple-200 border border-purple-400/40 rounded text-[8px] font-mono font-bold shrink-0">
+                          {isImage ? 'PHOTO' : 'B-ROLL'}
+                        </span>
+                        <span className="text-[11px] font-semibold text-purple-100 truncate">
+                          {clip.name}
+                        </span>
+                      </div>
+
+                      <span className="text-[9px] font-mono text-purple-300/80 pr-1 shrink-0">
+                        {clip.duration.toFixed(1)}s
+                      </span>
+
+                      {/* Right Trim Handle */}
+                      {!isOverlayLocked && (
+                        <div
+                          data-trim-handle="true"
+                          onPointerDown={(e) => handleTrimStart(e, clip.id, 'right')}
+                          title="Trim Duration"
+                          className="absolute right-0 top-0 bottom-0 w-2.5 bg-purple-500/30 hover:bg-cyan-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-purple-500/60"
+                        >
+                          <div className="w-0.5 h-3 bg-white/80 rounded" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           </div>
 
@@ -1881,93 +2139,175 @@ export const Timeline: React.FC<TimelineProps> = ({
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOverTrack(null);
+                if (isVideoLocked) return;
+
+                const rect = e.currentTarget.getBoundingClientRect();
+                const dropX = e.clientX - rect.left;
+                const dropSec = Math.max(0, dropX / pixelsPerSecond);
+
+                try {
+                  const rawData = e.dataTransfer.getData('application/json');
+                  if (rawData) {
+                    const parsed = JSON.parse(rawData);
+                    if (parsed.type === 'media-asset' && parsed.asset) {
+                      const asset: MediaAsset = parsed.asset;
+                      const isImage = asset.type === 'image' || asset.mediaType === 'image';
+                      const newClip: VideoClip = {
+                        id: `clip-${isImage ? 'img' : 'vid'}-${Date.now()}`,
+                        name: asset.name,
+                        mediaType: isImage ? 'image' : 'video',
+                        trackId: 'v1',
+                        sourceUrl: asset.sourceUrl,
+                        blob: asset.blob,
+                        thumbnailUrl: asset.thumbnailUrl,
+                        originalDuration: isImage ? 60 : asset.duration,
+                        inPoint: 0,
+                        outPoint: isImage ? 3.0 : asset.duration,
+                        duration: isImage ? 3.0 : asset.duration,
+                        startTimelineTime: dropSec,
+                        speed: 1.0,
+                        volume: isImage ? 0 : 1.0,
+                        isMuted: isImage,
+                        zoomScale: 1.0,
+                        zoomCenter: { x: 0.5, y: 0.5 },
+                        transitionIn: 'none',
+                        transitionDuration: 0.25,
+                        waveform: asset.waveform || [],
+                        audioBuffer: asset.audioBuffer,
+                      };
+                      setClips((prev) => [...prev, newClip]);
+                      setSelectedClipId(newClip.id);
+                      return;
+                    }
+                  }
+                } catch (err) {
+                  console.error('Failed to parse dropped media on V1:', err);
+                }
               }}
+              data-track-lane="v1"
               className={`relative flex-1 h-full flex items-center transition-all ${
                 dragOverTrack === 'v1'
                   ? 'bg-indigo-950/40 ring-2 ring-indigo-400/80 ring-inset'
                   : ''
               }`}
             >
-              {clips.map((clip, idx) => {
-                const isSelected = selectedClipId === clip.id;
-                const isTrimming = trimmingClipId === clip.id;
-                const leftPx = clip.startTimelineTime * pixelsPerSecond;
-                const widthPx = clip.duration * pixelsPerSecond;
+              {/* Phantom / Ghost Drop Preview on Track V1 */}
+              {draggingItem && draggingItem.targetTrack === 'v1' && (
+                <div
+                  style={{
+                    left: `${draggingItem.currentStartTime * pixelsPerSecond}px`,
+                    width: `${Math.max(40, draggingItem.duration * pixelsPerSecond)}px`,
+                  }}
+                  className="absolute top-1 bottom-1 rounded-lg border-2 border-dashed border-indigo-400 bg-indigo-500/25 shadow-[0_0_15px_rgba(99,102,241,0.6)] z-30 pointer-events-none flex items-center justify-between px-2 animate-pulse"
+                >
+                  <div className="flex items-center space-x-1 font-mono text-[9px] font-bold text-indigo-200">
+                    <span className="px-1 py-0.2 bg-indigo-400 text-slate-950 rounded text-[8px] font-black">V1</span>
+                    <span>{draggingItem.currentStartTime.toFixed(2)}s</span>
+                  </div>
+                  <span className="text-[9px] font-mono text-indigo-300 font-bold">{draggingItem.duration.toFixed(1)}s</span>
+                </div>
+              )}
 
-                return (
-                  <div
-                    key={clip.id}
-                    data-no-scrub="true"
-                    onPointerDown={(e) => {
-                      if (toolMode === 'select') {
-                        handleItemDragStart(e, clip.id, 'clip', clip.startTimelineTime, clip.duration);
-                      }
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (hasMovedRef.current) return;
-                      if (isVideoLocked) return;
+              {clips
+                .filter((c) => (c.trackId || 'v1') === 'v1')
+                .map((clip, idx) => {
+                  const isSelected = selectedClipId === clip.id;
+                  const isTrimming = trimmingClipId === clip.id;
+                  const isImage = clip.mediaType === 'image';
+                  const leftPx = clip.startTimelineTime * pixelsPerSecond;
+                  const widthPx = clip.duration * pixelsPerSecond;
 
-                      if (toolMode === 'razor') {
-                        // Razor Tool: Split clip at clicked mouse position
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const clickOffsetSec = (e.clientX - rect.left) / pixelsPerSecond;
-                        handleSplitClipAt(clip.id, clickOffsetSec);
-                      } else if (toolMode === 'select') {
-                        setSelectedClipId(clip.id);
-                        setSelectedOverlayId(null);
-                        if (setSelectedSfxId) setSelectedSfxId(null);
-                      }
-                    }}
-                    onMouseMove={(e) => {
-                      if (toolMode === 'razor' && !isVideoLocked) {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const offsetSec = (e.clientX - rect.left) / pixelsPerSecond;
-                        setRazorHoverSec(clip.startTimelineTime + offsetSec);
-                        setRazorHoverClipId(clip.id);
-                      }
-                    }}
-                    onMouseLeave={() => {
-                      if (toolMode === 'razor') {
-                        setRazorHoverSec(null);
-                        setRazorHoverClipId(null);
-                      }
-                    }}
-                    style={{
-                      left: `${leftPx}px`,
-                      width: `${widthPx}px`,
-                    }}
-                    className={`absolute h-18 rounded-lg overflow-hidden border-2 flex flex-col justify-between transition-shadow group select-none shadow-md ${
-                      toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
-                    } ${
-                      isSelected
-                        ? 'bg-slate-900 border-indigo-400 ring-2 ring-indigo-400/60 shadow-indigo-950/80 z-20'
-                        : 'bg-slate-900/90 border-slate-700/80 hover:border-slate-500 z-10'
-                    }`}
-                  >
-                    {/* Simulated Filmstrip Perforations (Top & Bottom) */}
-                    <div className="h-2 w-full bg-slate-950/80 flex items-center justify-between px-1 gap-1 overflow-hidden pointer-events-none border-b border-slate-800">
-                      {Array.from({ length: Math.max(3, Math.floor(widthPx / 16)) }).map((_, i) => (
-                        <div key={i} className="w-1.5 h-1 bg-slate-700/60 rounded-xs shrink-0" />
-                      ))}
-                    </div>
+                  return (
+                    <div
+                      key={clip.id}
+                      data-no-scrub="true"
+                      onPointerDown={(e) => {
+                        if (toolMode === 'select') {
+                          handleItemDragStart(e, clip.id, 'clip', clip.startTimelineTime, clip.duration);
+                        }
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (hasMovedRef.current) return;
+                        if (isVideoLocked) return;
 
-                    {/* Clip Body & Metadata */}
-                    <div className="flex-1 flex items-center justify-between px-2 overflow-hidden relative">
-                      <div className="flex items-center gap-1.5 overflow-hidden z-10">
-                        <Film className="w-3 h-3 text-indigo-400 shrink-0" />
-                        <span className="text-xs font-semibold text-slate-100 truncate">{clip.name}</span>
-                        {clip.speed !== 1 && (
-                          <span className="px-1 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[9px] font-mono border border-amber-500/30">
-                            {clip.speed}x
-                          </span>
-                        )}
-                        {clip.transitionIn !== 'none' && (
-                          <span className="px-1 py-0.2 bg-indigo-500/20 text-indigo-300 rounded text-[9px] font-mono border border-indigo-500/30">
-                            {clip.transitionIn}
-                          </span>
-                        )}
+                        if (toolMode === 'razor') {
+                          // Razor Tool: Split clip at clicked mouse position
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const clickOffsetSec = (e.clientX - rect.left) / pixelsPerSecond;
+                          handleSplitClipAt(clip.id, clickOffsetSec);
+                        } else if (toolMode === 'select') {
+                          setSelectedClipId(clip.id);
+                          setSelectedOverlayId(null);
+                          if (setSelectedSfxId) setSelectedSfxId(null);
+                        }
+                      }}
+                      onMouseMove={(e) => {
+                        if (toolMode === 'razor' && !isVideoLocked) {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const offsetSec = (e.clientX - rect.left) / pixelsPerSecond;
+                          setRazorHoverSec(clip.startTimelineTime + offsetSec);
+                          setRazorHoverClipId(clip.id);
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        if (toolMode === 'razor') {
+                          setRazorHoverSec(null);
+                          setRazorHoverClipId(null);
+                        }
+                      }}
+                      style={{
+                        left: `${leftPx}px`,
+                        width: `${widthPx}px`,
+                      }}
+                      className={`absolute h-18 rounded-lg overflow-hidden border-2 flex flex-col justify-between transition-shadow group select-none shadow-md ${
+                        toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                      } ${
+                        isSelected
+                          ? isImage
+                            ? 'bg-slate-900 border-cyan-400 ring-2 ring-cyan-400/60 shadow-cyan-950/80 z-20'
+                            : 'bg-slate-900 border-indigo-400 ring-2 ring-indigo-400/60 shadow-indigo-950/80 z-20'
+                          : isImage
+                          ? 'bg-slate-900/90 border-cyan-700/60 hover:border-cyan-400 z-10'
+                          : 'bg-slate-900/90 border-slate-700/80 hover:border-slate-500 z-10'
+                      }`}
+                    >
+                      {/* Simulated Filmstrip Perforations (Top & Bottom) */}
+                      <div className="h-2 w-full bg-slate-950/80 flex items-center justify-between px-1 gap-1 overflow-hidden pointer-events-none border-b border-slate-800">
+                        {Array.from({ length: Math.max(3, Math.floor(widthPx / 16)) }).map((_, i) => (
+                          <div key={i} className={`w-1.5 h-1 ${isImage ? 'bg-cyan-700/60' : 'bg-slate-700/60'} rounded-xs shrink-0`} />
+                        ))}
                       </div>
+
+                      {/* Clip Body & Metadata */}
+                      <div className="flex-1 flex items-center justify-between px-2 overflow-hidden relative">
+                        <div className="flex items-center gap-1.5 overflow-hidden z-10">
+                          {isImage ? (
+                            <img
+                              src={clip.thumbnailUrl || clip.sourceUrl}
+                              alt={clip.name}
+                              className="w-4 h-4 rounded object-cover shrink-0 border border-cyan-400/40"
+                            />
+                          ) : (
+                            <Film className="w-3 h-3 text-indigo-400 shrink-0" />
+                          )}
+                          {isImage && (
+                            <span className="px-1 py-0.2 bg-cyan-500/20 text-cyan-300 rounded text-[8px] font-mono font-bold border border-cyan-500/40">
+                              IMG
+                            </span>
+                          )}
+                          <span className="text-xs font-semibold text-slate-100 truncate">{clip.name}</span>
+                          {clip.speed !== 1 && (
+                            <span className="px-1 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[9px] font-mono border border-amber-500/30">
+                              {clip.speed}x
+                            </span>
+                          )}
+                          {clip.transitionIn !== 'none' && (
+                            <span className="px-1 py-0.2 bg-indigo-500/20 text-indigo-300 rounded text-[9px] font-mono border border-indigo-500/30">
+                              {clip.transitionIn}
+                            </span>
+                          )}
+                        </div>
 
                       {/* Quick Split / Delete Icons on Hover */}
                       <div className="hidden group-hover:flex items-center gap-1 z-20">
@@ -2068,8 +2408,10 @@ export const Timeline: React.FC<TimelineProps> = ({
             />
 
             {/* Lane Items */}
-            <div className="relative flex-1 h-full flex items-center">
-              {clips.map((clip) => {
+            <div data-track-lane="a1" className="relative flex-1 h-full flex items-center">
+              {clips
+                .filter((c) => c.mediaType !== 'image' && (c.trackId || 'v1') === 'v1')
+                .map((clip) => {
                 const isSelected = selectedClipId === clip.id;
                 const leftPx = clip.startTimelineTime * pixelsPerSecond;
                 const widthPx = clip.duration * pixelsPerSecond;
@@ -2283,12 +2625,30 @@ export const Timeline: React.FC<TimelineProps> = ({
                   console.error('Failed to parse dropped SFX:', err);
                 }
               }}
+              data-track-lane="a2"
               className={`relative flex-1 h-full flex items-center transition-all ${
                 dragOverTrack === 'a2'
                   ? 'bg-emerald-950/40 ring-2 ring-emerald-400/80 ring-inset'
                   : ''
               }`}
             >
+              {/* Phantom / Ghost Drop Preview on Track A2 */}
+              {draggingItem && draggingItem.type === 'sfx' && (
+                <div
+                  style={{
+                    left: `${draggingItem.currentStartTime * pixelsPerSecond}px`,
+                    width: `${Math.max(40, draggingItem.duration * pixelsPerSecond)}px`,
+                  }}
+                  className="absolute top-1 bottom-1 rounded-lg border-2 border-dashed border-emerald-400 bg-emerald-500/25 shadow-[0_0_15px_rgba(16,185,129,0.6)] z-30 pointer-events-none flex items-center justify-between px-2 animate-pulse"
+                >
+                  <div className="flex items-center space-x-1 font-mono text-[9px] font-bold text-emerald-200">
+                    <span className="px-1 py-0.2 bg-emerald-400 text-slate-950 rounded text-[8px] font-black">A2</span>
+                    <span>{draggingItem.currentStartTime.toFixed(2)}s</span>
+                  </div>
+                  <span className="text-[9px] font-mono text-emerald-300 font-bold">{draggingItem.duration.toFixed(1)}s</span>
+                </div>
+              )}
+
               {sfxTracks.map((sfx) => {
                 const isSelected = selectedSfxId === sfx.id;
                 const leftPx = sfx.startTimelineTime * pixelsPerSecond;

@@ -98,8 +98,34 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const isPlayingRef = useRef(isPlaying);
   const clipsRef = useRef(clips);
   const videoElementsRef = useRef(videoElements);
+  const imageElementsRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const isMutedRef = useRef(isMuted);
   const sfxTracksRef = useRef(sfxTracks);
+
+  // Sync and preload Image DOM elements for photo clips
+  useEffect(() => {
+    const currentMap = imageElementsRef.current;
+    const photoClips = clips.filter((c) => c.mediaType === 'image');
+    const photoIds = new Set(photoClips.map((c) => c.id));
+
+    // Remove deleted elements
+    for (const [id] of currentMap.entries()) {
+      if (!photoIds.has(id)) {
+        currentMap.delete(id);
+      }
+    }
+
+    // Preload image elements
+    photoClips.forEach((clip) => {
+      let img = currentMap.get(clip.id);
+      if (!img || img.src !== clip.sourceUrl) {
+        img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = clip.sourceUrl;
+        currentMap.set(clip.id, img);
+      }
+    });
+  }, [clips]);
 
   useEffect(() => {
     currentTimeRef.current = currentTime;
@@ -298,6 +324,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
             overlays,
             zoomKeyframes,
             videoElements: curVideoElements,
+            imageElements: imageElementsRef.current,
             width: targetWidth,
             height: targetHeight,
             words,

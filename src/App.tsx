@@ -17,6 +17,7 @@ import {
   ViralClipSegment,
   CaptionTrackItem,
   DiagnosticSettings,
+  MediaAsset,
 } from './types/timeline';
 import { Navbar } from './components/Navbar';
 import { CanvasPlayer } from './components/Player/CanvasPlayer';
@@ -48,6 +49,17 @@ export function App() {
   const [zoomKeyframes, setZoomKeyframes] = useState<DynamicZoomKeyframe[]>([]);
   const [sfxTracks, setSfxTracks] = useState<SfxTrackItem[]>([]);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+
+  // Dedicated Media Assets Bin State
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+
+  const handleAddAssetToBin = useCallback((asset: MediaAsset) => {
+    setMediaAssets((prev) => [asset, ...prev.filter((a) => a.id !== asset.id)]);
+  }, []);
+
+  const handleRemoveAssetFromBin = useCallback((assetId: string) => {
+    setMediaAssets((prev) => prev.filter((a) => a.id !== assetId));
+  }, []);
 
   // SupoClip Captions, Hook Title & Virality State
   const [captionTemplate, setCaptionTemplate] = useState<CaptionTemplate>(
@@ -130,6 +142,21 @@ export function App() {
         });
         if (isMounted) {
           setClips([demoClip]);
+          setMediaAssets([
+            {
+              id: 'asset-starter-demo',
+              name: demoClip.name || 'HOOK: Watch This Secret',
+              type: 'video',
+              mediaType: 'video',
+              sourceUrl: demoClip.sourceUrl,
+              thumbnailUrl: demoClip.thumbnailUrl || demoClip.sourceUrl,
+              duration: demoClip.duration,
+              blob: demoClip.blob,
+              audioBuffer: demoClip.audioBuffer,
+              waveform: demoClip.waveform,
+              createdAt: Date.now(),
+            },
+          ]);
 
           // Auto-transcribe demo clip so captions are live on screen immediately
           let audioBuf = demoClip.audioBuffer;
@@ -199,6 +226,33 @@ export function App() {
       clipStart = lastClip ? lastClip.startTimelineTime + lastClip.duration : 0;
       return [...prev, { ...newClip, startTimelineTime: clipStart }];
     });
+
+    // Also track in Media Assets Bin if not already present
+    const isImage = newClip.mediaType === 'image';
+    setMediaAssets((prev) => {
+      if (prev.some((a) => a.sourceUrl === newClip.sourceUrl)) return prev;
+      return [
+        {
+          id: `asset-${Date.now()}`,
+          name: newClip.name,
+          type: isImage ? 'image' : 'video',
+          mediaType: isImage ? 'image' : 'video',
+          sourceUrl: newClip.sourceUrl,
+          thumbnailUrl: newClip.thumbnailUrl || newClip.sourceUrl,
+          duration: newClip.duration,
+          blob: newClip.blob,
+          audioBuffer: newClip.audioBuffer,
+          waveform: newClip.waveform,
+          createdAt: Date.now(),
+        },
+        ...prev,
+      ];
+    });
+
+    if (isImage) {
+      // Photo clips do not contain audio streams; skip audio decoding & STT
+      return;
+    }
 
     // Auto transcribe video audio immediately without manual intervention
     try {
@@ -533,6 +587,10 @@ export function App() {
                 onAddClip={handleAddClip}
                 isLoadingDemo={isLoadingDemo}
                 setIsLoadingDemo={setIsLoadingDemo}
+                mediaAssets={mediaAssets}
+                onAddAssetToBin={handleAddAssetToBin}
+                onRemoveAssetFromBin={handleRemoveAssetFromBin}
+                currentTime={currentTime}
               />
             )}
             {sidebarTab === 'stickers' && (

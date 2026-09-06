@@ -58,11 +58,33 @@ export interface ViralClipSegment {
   words: TranscriptWord[];
 }
 
+export type MediaType = 'video' | 'image' | 'audio';
+
+export interface MediaAsset {
+  id: string;
+  name: string;
+  type: 'video' | 'image';
+  mediaType?: 'video' | 'image';
+  sourceUrl: string;
+  blob?: Blob;
+  thumbnailUrl?: string;
+  duration: number; // Video duration or 3.0s default for photo
+  width?: number;
+  height?: number;
+  fileSize?: string;
+  waveform?: number[];
+  audioBuffer?: AudioBuffer;
+  createdAt?: number;
+}
+
 export interface VideoClip {
   id: string;
   name: string;
+  mediaType?: 'video' | 'image'; // 'video' | 'image' (default: 'video')
+  trackId?: 'v1' | 'v2';          // 'v1' (Main Video) | 'v2' (Overlay / B-roll) (default: 'v1')
   sourceUrl: string;
   blob?: Blob;
+  thumbnailUrl?: string;
   originalDuration: number;
   inPoint: number;       // Trimming start inside source (seconds)
   outPoint: number;      // Trimming end inside source (seconds)

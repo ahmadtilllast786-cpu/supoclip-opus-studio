@@ -5,6 +5,7 @@ import {
   VolumeX,
   Music,
   Video,
+  Image as ImageIcon,
   Smile,
   Sparkles,
   Layers,
@@ -509,11 +510,22 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
             {selectedClip && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                  <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center">
-                    <Video className="w-3.5 h-3.5 mr-1.5" />
-                    Clip Inspector
+                  <span className={`text-xs font-bold uppercase tracking-wider flex items-center ${
+                    selectedClip.mediaType === 'image' ? 'text-cyan-400' : 'text-indigo-400'
+                  }`}>
+                    {selectedClip.mediaType === 'image' ? (
+                      <ImageIcon className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
+                    ) : (
+                      <Video className="w-3.5 h-3.5 mr-1.5 text-indigo-400" />
+                    )}
+                    {selectedClip.mediaType === 'image' ? 'Photo Clip' : 'Clip Inspector'}
                   </span>
                   <div className="flex items-center space-x-1.5">
+                    {selectedClip.mediaType === 'image' && (
+                      <span className="px-1.5 py-0.2 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded text-[9px] font-mono font-bold">
+                        IMG
+                      </span>
+                    )}
                     <span className="text-[10px] font-mono text-slate-400">
                       {selectedClip.duration.toFixed(2)}s
                     </span>
@@ -530,58 +542,116 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                   </div>
                 </div>
 
-                <div className="text-xs font-semibold text-slate-200 truncate">
-                  {selectedClip.name}
+                <div className="text-xs font-semibold text-slate-200 truncate flex items-center space-x-2">
+                  {selectedClip.mediaType === 'image' && selectedClip.thumbnailUrl && (
+                    <img
+                      src={selectedClip.thumbnailUrl}
+                      alt={selectedClip.name}
+                      className="w-6 h-6 rounded object-cover border border-cyan-500/40 shrink-0"
+                    />
+                  )}
+                  <span className="truncate">{selectedClip.name}</span>
                 </div>
 
-                {/* Trimming In/Out */}
-                <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-                  <div className="text-[11px] font-bold text-slate-300 flex items-center">
-                    <Clock className="w-3 h-3 mr-1 text-slate-400" />
-                    <span>Trimming & Timing</span>
+                {/* Trimming & Timing / Photo Duration */}
+                {selectedClip.mediaType === 'image' ? (
+                  <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+                    <div className="flex justify-between text-[11px] font-bold text-slate-300">
+                      <span className="flex items-center">
+                        <Clock className="w-3 h-3 mr-1 text-cyan-400" />
+                        <span>Photo Duration</span>
+                      </span>
+                      <span className="font-mono text-cyan-400">
+                        {selectedClip.duration.toFixed(1)}s
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="30"
+                      step="0.5"
+                      value={selectedClip.duration}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        onUpdateClip({
+                          ...selectedClip,
+                          duration: val,
+                          outPoint: selectedClip.inPoint + val,
+                        });
+                      }}
+                      className="w-full h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-cyan-500"
+                    />
+                    <div className="flex items-center justify-between gap-1 pt-1">
+                      {[1, 3, 5, 10].map((sec) => (
+                        <button
+                          key={sec}
+                          onClick={() =>
+                            onUpdateClip({
+                              ...selectedClip,
+                              duration: sec,
+                              outPoint: selectedClip.inPoint + sec,
+                            })
+                          }
+                          className={`flex-1 py-0.5 text-[9px] font-mono rounded border transition ${
+                            Math.abs(selectedClip.duration - sec) < 0.1
+                              ? 'bg-cyan-600 border-cyan-400 text-white'
+                              : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          {sec}s
+                        </button>
+                      ))}
+                    </div>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-[10px] text-slate-400">In Point (s)</span>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max={selectedClip.outPoint - 0.2}
-                        value={Number(selectedClip.inPoint.toFixed(2))}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          onUpdateClip({
-                            ...selectedClip,
-                            inPoint: val,
-                            duration: (selectedClip.outPoint - val) / selectedClip.speed,
-                          });
-                        }}
-                        className="w-full bg-slate-950 border border-slate-800 rounded p-1 text-xs text-slate-200 font-mono"
-                      />
+                ) : (
+                  <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+                    <div className="text-[11px] font-bold text-slate-300 flex items-center">
+                      <Clock className="w-3 h-3 mr-1 text-slate-400" />
+                      <span>Trimming & Timing</span>
                     </div>
 
-                    <div>
-                      <span className="text-[10px] text-slate-400">Out Point (s)</span>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min={selectedClip.inPoint + 0.2}
-                        value={Number(selectedClip.outPoint.toFixed(2))}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          onUpdateClip({
-                            ...selectedClip,
-                            outPoint: val,
-                            duration: (val - selectedClip.inPoint) / selectedClip.speed,
-                          });
-                        }}
-                        className="w-full bg-slate-950 border border-slate-800 rounded p-1 text-xs text-slate-200 font-mono"
-                      />
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-400">In Point (s)</span>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max={selectedClip.outPoint - 0.2}
+                          value={Number(selectedClip.inPoint.toFixed(2))}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            onUpdateClip({
+                              ...selectedClip,
+                              inPoint: val,
+                              duration: (selectedClip.outPoint - val) / selectedClip.speed,
+                            });
+                          }}
+                          className="w-full bg-slate-950 border border-slate-800 rounded p-1 text-xs text-slate-200 font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-slate-400">Out Point (s)</span>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={selectedClip.inPoint + 0.2}
+                          value={Number(selectedClip.outPoint.toFixed(2))}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            onUpdateClip({
+                              ...selectedClip,
+                              outPoint: val,
+                              duration: (val - selectedClip.inPoint) / selectedClip.speed,
+                            });
+                          }}
+                          className="w-full bg-slate-950 border border-slate-800 rounded p-1 text-xs text-slate-200 font-mono"
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
                 {/* Transition In Selector */}
                 <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
@@ -605,28 +675,30 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
                   </select>
                 </div>
 
-                {/* Clip Volume */}
-                <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-                  <div className="flex justify-between text-[11px] font-bold text-slate-300">
-                    <span className="flex items-center">
-                      <Volume2 className="w-3 h-3 mr-1" /> Volume
-                    </span>
-                    <span className="font-mono text-indigo-400">
-                      {Math.round(selectedClip.volume * 100)}%
-                    </span>
+                {/* Clip Volume (Video Only) */}
+                {selectedClip.mediaType !== 'image' && (
+                  <div className="space-y-2 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+                    <div className="flex justify-between text-[11px] font-bold text-slate-300">
+                      <span className="flex items-center">
+                        <Volume2 className="w-3 h-3 mr-1" /> Volume
+                      </span>
+                      <span className="font-mono text-indigo-400">
+                        {Math.round(selectedClip.volume * 100)}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value={selectedClip.volume}
+                      onChange={(e) =>
+                        onUpdateClip({ ...selectedClip, volume: Number(e.target.value) })
+                      }
+                      className="w-full h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
+                    />
                   </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="0.05"
-                    value={selectedClip.volume}
-                    onChange={(e) =>
-                      onUpdateClip({ ...selectedClip, volume: Number(e.target.value) })
-                    }
-                    className="w-full h-1 bg-slate-800 rounded appearance-none cursor-pointer accent-indigo-500"
-                  />
-                </div>
+                )}
 
                 {/* Clip Zoom Scale */}
                 <div className="space-y-1.5 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
