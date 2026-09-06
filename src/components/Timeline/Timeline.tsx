@@ -74,8 +74,10 @@ export const Timeline: React.FC<TimelineProps> = ({
   setSelectedSfxId,
   onAddPunchZoom,
 }) => {
-  // Timeline Zoom & Viewport
+  // Timeline Zoom & Viewport Sizing (Adjusted to One Screen by Default)
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [isAutoFit, setIsAutoFit] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const [showMinimap, setShowMinimap] = useState(true);
   const [timecodeMode, setTimecodeMode] = useState<'standard' | 'smpte'>('standard');
@@ -129,8 +131,45 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Total project duration with comfortable UI breathing room
   const totalDuration = Math.max(10, projectEndSec);
 
-  // Total horizontal pixel canvas width
-  const timelineWidth = Math.max(1200, TRACK_HEADER_WIDTH + (totalDuration + 3) * pixelsPerSecond + 200);
+  // Measure container width dynamically with ResizeObserver
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateSize = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.clientWidth);
+      }
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  // Compute fit-to-screen pixelsPerSecond so the entire video ends cleanly inside one screen visual
+  const calculateFitPps = useCallback(
+    (cWidth: number, endSec: number) => {
+      const availableLane = Math.max(200, cWidth - TRACK_HEADER_WIDTH - 60);
+      return Math.max(15, Math.min(350, availableLane / Math.max(0.1, endSec)));
+    },
+    [TRACK_HEADER_WIDTH]
+  );
+
+  // When auto-fit is active or container width / project changes, sync pixelsPerSecond
+  useEffect(() => {
+    if (isAutoFit && containerWidth > 0 && projectEndSec > 0) {
+      const fitPps = calculateFitPps(containerWidth, projectEndSec);
+      setPixelsPerSecond(fitPps);
+    }
+  }, [isAutoFit, containerWidth, projectEndSec, calculateFitPps]);
+
+  // Total horizontal canvas width:
+  // When isAutoFit is true, timelineWidth matches containerWidth exactly (0 horizontal scrollbar!).
+  // When zoomed in, timelineWidth expands allowing smooth horizontal panning.
+  const naturalContentWidth = TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond + 60;
+  const timelineWidth =
+    isAutoFit && containerWidth > 0
+      ? containerWidth
+      : Math.max(containerWidth || 800, naturalContentWidth);
 
   // Has any active selection
   const hasSelection = Boolean(selectedClipId || selectedOverlayId || selectedSfxId);
@@ -313,14 +352,35 @@ export const Timeline: React.FC<TimelineProps> = ({
     [projectEndSec, setCurrentTime]
   );
 
-  // Zoom to Fit Project in visible container width
+  // Zoom to Fit Project in visible container width (1-Screen view)
   const handleZoomToFit = useCallback(() => {
+    setIsAutoFit(true);
     if (!containerRef.current || projectEndSec <= 0) return;
-    const availableWidth = containerRef.current.clientWidth - TRACK_HEADER_WIDTH - 60;
-    const calculatedPps = Math.max(20, Math.min(250, Math.floor(availableWidth / projectEndSec)));
+    const availableWidth = Math.max(200, containerRef.current.clientWidth - TRACK_HEADER_WIDTH - 60);
+    const calculatedPps = Math.max(15, Math.min(350, availableWidth / projectEndSec));
     setPixelsPerSecond(calculatedPps);
     containerRef.current.scrollTo({ left: 0, behavior: 'smooth' });
   }, [projectEndSec, TRACK_HEADER_WIDTH]);
+
+  // Smooth wheel zoom listener (Ctrl / Alt / Meta + Wheel or Pinch)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.12 : 0.89;
+        setIsAutoFit(false);
+        setPixelsPerSecond((prev) => {
+          return Math.max(15, Math.min(350, Math.round(prev * factor)));
+        });
+      }
+    };
+
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, []);
 
   // Add SFX Item at current playhead
   const handleAddSfxAtPlayhead = useCallback(() => {
@@ -367,6 +427,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     [pixelsPerSecond, isSnappingEnabled, getSnapPoints, TRACK_HEADER_WIDTH, setCurrentTime]
   );
 
+  // Throttled scrubbing with requestAnimationFrame for 60fps smoothness
+  const rafScrubRef = useRef<number | null>(null);
+
   // Hand / Pan Tool dragging
   const handleTimelineMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     // If Hand tool is active, start dragging the canvas horizontally
@@ -402,11 +465,18 @@ export const Timeline: React.FC<TimelineProps> = ({
     updateTimeFromMouse(e.clientX);
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
-      updateTimeFromMouse(moveEvent.clientX);
+      if (rafScrubRef.current !== null) cancelAnimationFrame(rafScrubRef.current);
+      rafScrubRef.current = requestAnimationFrame(() => {
+        updateTimeFromMouse(moveEvent.clientX);
+      });
     };
 
     const handleMouseUp = () => {
       setSnapGuideTime(null);
+      if (rafScrubRef.current !== null) {
+        cancelAnimationFrame(rafScrubRef.current);
+        rafScrubRef.current = null;
+      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
@@ -415,7 +485,9 @@ export const Timeline: React.FC<TimelineProps> = ({
     window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Trimming Logic
+  // Trimming Logic with requestAnimationFrame
+  const rafTrimRef = useRef<number | null>(null);
+
   const handleTrimStart = (
     e: React.MouseEvent,
     clipId: string,
@@ -434,47 +506,54 @@ export const Timeline: React.FC<TimelineProps> = ({
     setTrimDeltaSec(0);
 
     const handleTrimMove = (moveEvent: MouseEvent) => {
-      const deltaPixels = moveEvent.clientX - e.clientX;
-      const deltaSec = deltaPixels / pixelsPerSecond;
-      setTrimDeltaSec(deltaSec);
+      if (rafTrimRef.current !== null) cancelAnimationFrame(rafTrimRef.current);
+      rafTrimRef.current = requestAnimationFrame(() => {
+        const deltaPixels = moveEvent.clientX - e.clientX;
+        const deltaSec = deltaPixels / pixelsPerSecond;
+        setTrimDeltaSec(deltaSec);
 
-      setClips((prevClips) =>
-        prevClips.map((c) => {
-          if (c.id !== clipId) return c;
-          if (edge === 'left') {
-            const newInPoint = Math.max(
-              0,
-              Math.min(clip.outPoint - 0.3 * clip.speed, clip.inPoint + deltaSec * clip.speed)
-            );
-            const appliedDeltaSec = (newInPoint - clip.inPoint) / clip.speed;
-            const newDuration = (clip.outPoint - newInPoint) / clip.speed;
-            const newStart = Math.max(0, clip.startTimelineTime + appliedDeltaSec);
-            return {
-              ...c,
-              inPoint: newInPoint,
-              duration: newDuration,
-              startTimelineTime: newStart,
-            };
-          } else {
-            const newOutPoint = Math.min(
-              clip.originalDuration,
-              Math.max(clip.inPoint + 0.3 * clip.speed, clip.outPoint + deltaSec * clip.speed)
-            );
-            const newDuration = (newOutPoint - clip.inPoint) / clip.speed;
-            return {
-              ...c,
-              outPoint: newOutPoint,
-              duration: newDuration,
-            };
-          }
-        })
-      );
+        setClips((prevClips) =>
+          prevClips.map((c) => {
+            if (c.id !== clipId) return c;
+            if (edge === 'left') {
+              const newInPoint = Math.max(
+                0,
+                Math.min(clip.outPoint - 0.3 * clip.speed, clip.inPoint + deltaSec * clip.speed)
+              );
+              const appliedDeltaSec = (newInPoint - clip.inPoint) / clip.speed;
+              const newDuration = (clip.outPoint - newInPoint) / clip.speed;
+              const newStart = Math.max(0, clip.startTimelineTime + appliedDeltaSec);
+              return {
+                ...c,
+                inPoint: newInPoint,
+                duration: newDuration,
+                startTimelineTime: newStart,
+              };
+            } else {
+              const newOutPoint = Math.min(
+                clip.originalDuration,
+                Math.max(clip.inPoint + 0.3 * clip.speed, clip.outPoint + deltaSec * clip.speed)
+              );
+              const newDuration = (newOutPoint - clip.inPoint) / clip.speed;
+              return {
+                ...c,
+                outPoint: newOutPoint,
+                duration: newDuration,
+              };
+            }
+          })
+        );
+      });
     };
 
     const handleTrimEnd = () => {
       setTrimmingClipId(null);
       setTrimEdge(null);
       setTrimDeltaSec(null);
+      if (rafTrimRef.current !== null) {
+        cancelAnimationFrame(rafTrimRef.current);
+        rafTrimRef.current = null;
+      }
       window.removeEventListener('mousemove', handleTrimMove);
       window.removeEventListener('mouseup', handleTrimEnd);
     };
@@ -553,7 +632,20 @@ export const Timeline: React.FC<TimelineProps> = ({
         isSnappingEnabled={isSnappingEnabled}
         setIsSnappingEnabled={setIsSnappingEnabled}
         pixelsPerSecond={pixelsPerSecond}
-        setPixelsPerSecond={setPixelsPerSecond}
+        setPixelsPerSecond={(pps) => {
+          setIsAutoFit(false);
+          setPixelsPerSecond(pps);
+        }}
+        isAutoFit={isAutoFit}
+        onToggleAutoFit={() => {
+          setIsAutoFit((prev) => {
+            const next = !prev;
+            if (next) {
+              handleZoomToFit();
+            }
+            return next;
+          });
+        }}
         currentTime={currentTime}
         totalDuration={totalDuration}
         projectEndSec={projectEndSec}
@@ -1133,9 +1225,10 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* ========================================================= */}
           <div
             style={{
-              left: `${TRACK_HEADER_WIDTH + currentTime * pixelsPerSecond}px`,
+              transform: `translate3d(${TRACK_HEADER_WIDTH + currentTime * pixelsPerSecond}px, 0, 0)`,
+              willChange: 'transform',
             }}
-            className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(239,68,68,0.9)]"
+            className="absolute top-0 bottom-0 left-0 w-0.5 bg-red-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(239,68,68,0.9)]"
           >
             {/* Playhead Triangular Header Handle */}
             <div className="absolute -top-0 -translate-x-1/2 w-3.5 h-4 bg-red-500 shadow-md flex items-center justify-center [clip-path:polygon(0%_0%,100%_0%,100%_65%,50%_100%,0%_65%)]" />

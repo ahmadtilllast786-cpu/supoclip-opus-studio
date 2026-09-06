@@ -50,18 +50,27 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     return Math.max(0, relativeX / pixelsPerSecond);
   };
 
+  const rafRef = useRef<number | null>(null);
+
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     const time = getTimeFromEvent(e);
     onSeek(time);
     setIsRulerDragging(true);
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
-      const moveTime = getTimeFromEvent(moveEvent);
-      onSeek(moveTime);
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        const moveTime = getTimeFromEvent(moveEvent);
+        onSeek(moveTime);
+      });
     };
 
     const handleMouseUp = () => {
       setIsRulerDragging(false);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };

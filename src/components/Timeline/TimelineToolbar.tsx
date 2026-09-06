@@ -41,6 +41,8 @@ interface TimelineToolbarProps {
   onNudgeFrame: (frames: number) => void;
   onJumpToCut: (direction: 'prev' | 'next') => void;
   onZoomToFit: () => void;
+  isAutoFit?: boolean;
+  onToggleAutoFit?: () => void;
   showMinimap: boolean;
   setShowMinimap: (show: boolean | ((prev: boolean) => boolean)) => void;
   timecodeMode: 'standard' | 'smpte';
@@ -66,6 +68,8 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
   onNudgeFrame,
   onJumpToCut,
   onZoomToFit,
+  isAutoFit = true,
+  onToggleAutoFit,
   showMinimap,
   setShowMinimap,
   timecodeMode,
@@ -293,40 +297,48 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
         </button>
 
         {/* Zoom Controls */}
-        <div className="flex items-center space-x-1 bg-slate-950/70 px-2 py-1 rounded-lg border border-slate-800">
+        <div className="flex items-center space-x-1.5 bg-slate-950/70 px-2 py-1 rounded-lg border border-slate-800">
           <button
-            onClick={() => setPixelsPerSecond((p) => Math.max(20, p - 15))}
+            onClick={() => {
+              if (onToggleAutoFit) onToggleAutoFit();
+              else onZoomToFit();
+            }}
+            title="Fit Entire Video in One Screen Visual (F)"
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition-all border ${
+              isAutoFit
+                ? 'bg-indigo-600 text-white border-indigo-400 shadow-xs'
+                : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 border-slate-700/80'
+            }`}
+          >
+            <Maximize2 className="w-3 h-3" />
+            <span>1-Screen</span>
+          </button>
+
+          <button
+            onClick={() => setPixelsPerSecond((p) => Math.max(15, p - 15))}
             title="Zoom Out (-)"
-            className="p-0.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded"
+            className="p-0.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition-colors"
           >
             <ZoomOut className="w-3.5 h-3.5" />
           </button>
 
           <input
             type="range"
-            min={20}
-            max={250}
+            min={15}
+            max={350}
             step={5}
             value={pixelsPerSecond}
             onChange={(e) => setPixelsPerSecond(Number(e.target.value))}
-            title={`Timeline Zoom: ${pixelsPerSecond}px/sec`}
+            title={`Timeline Zoom: ${pixelsPerSecond}px/sec (Ctrl+Wheel to zoom)`}
             className="w-16 sm:w-20 md:w-24 h-1 accent-indigo-500 bg-slate-800 rounded appearance-none cursor-pointer"
           />
 
           <button
-            onClick={() => setPixelsPerSecond((p) => Math.min(250, p + 15))}
-            title="Zoom In (+)"
-            className="p-0.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded"
+            onClick={() => setPixelsPerSecond((p) => Math.min(350, p + 15))}
+            title="Zoom In for Minor Detail (+)"
+            className="p-0.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition-colors"
           >
             <ZoomIn className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={onZoomToFit}
-            title="Zoom to Fit Project (F)"
-            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded ml-1"
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
           </button>
         </div>
 
