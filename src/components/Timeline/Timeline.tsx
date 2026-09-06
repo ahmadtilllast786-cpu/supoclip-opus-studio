@@ -1464,13 +1464,16 @@ export const Timeline: React.FC<TimelineProps> = ({
                         id: `overlay-${Date.now()}`,
                         emoji: item.emoji || '✨',
                         label: item.label || 'Sticker',
+                        assetUrl: item.assetUrl || undefined,
+                        assetType: item.format || undefined,
+                        category: item.category || undefined,
                         startTimelineTime: dropSec,
                         duration: 2.0,
                         x: 50,
                         y: 40,
                         scale: 1,
                         rotation: 0,
-                        animation: (item.animation as any) || 'bounce',
+                        animation: (item.defaultAnimation || item.animation as any) || 'bounce',
                         pairedSfx: item.sfx || null,
                       };
                       setOverlays((prev) => [...prev, newOverlay]);
@@ -1548,7 +1551,15 @@ export const Timeline: React.FC<TimelineProps> = ({
                       </div>
                     )}
 
-                    <span className="text-base mr-1.5 shrink-0 select-none pl-1">{ov.emoji}</span>
+                    {ov.assetUrl ? (
+                      <img
+                        src={ov.assetUrl}
+                        alt={ov.label}
+                        className="w-5 h-5 object-contain mr-1.5 shrink-0 select-none pl-1"
+                      />
+                    ) : (
+                      <span className="text-base mr-1.5 shrink-0 select-none pl-1">{ov.emoji}</span>
+                    )}
                     <span
                       className={`text-xs font-semibold truncate ${
                         ov.isDisabled ? 'line-through text-slate-400' : 'text-purple-200'

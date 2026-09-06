@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <g transform="rotate(45 60 60)">
+    <!-- Rocket Thruster Flame -->
+    <path d="M54,80 Q60,110 60,118 Q60,110 66,80 Z" fill="#FF4400">
+      <animate attributeName="d" values="M54,80 Q60,105 60,112 Q60,105 66,80 Z; M54,80 Q60,118 60,128 Q60,118 66,80 Z; M54,80 Q60,105 60,112 Q60,105 66,80 Z" dur="0.25s" repeatCount="indefinite"/>
+    </path>
+    <path d="M57,80 Q60,100 60,106 Q60,100 63,80 Z" fill="#FFFF00">
+      <animate attributeName="d" values="M57,80 Q60,95 60,100 Q60,95 63,80 Z; M57,80 Q60,106 60,114 Q60,106 63,80 Z; M57,80 Q60,95 60,100 Q60,95 63,80 Z" dur="0.2s" repeatCount="indefinite"/>
+    </path>
+    <!-- Fins -->
+    <path d="M48,68 L32,82 L48,82 Z" fill="#E11D48" stroke="#000" stroke-width="2.5"/>
+    <path d="M72,68 L88,82 L72,82 Z" fill="#E11D48" stroke="#000" stroke-width="2.5"/>
+    <!-- Fuselage Body -->
+    <path d="M60,18 C48,36 48,64 48,80 L72,80 C72,64 72,36 60,18 Z" fill="#F8FAFC" stroke="#0F172A" stroke-width="3.5"/>
+    <!-- Nosecone -->
+    <path d="M60,18 C52,32 50,42 50,42 L70,42 C70,42 68,32 60,18 Z" fill="#E11D48"/>
+    <!-- Porthole Window -->
+    <circle cx="60" cy="54" r="8" fill="#38BDF8" stroke="#0F172A" stroke-width="2.5"/>
+    <circle cx="58" cy="52" r="3" fill="#FFFFFF"/>
+  </g>
+</svg>

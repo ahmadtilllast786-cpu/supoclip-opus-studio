@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="bellGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFE600"/>
+      <stop offset="100%" stop-color="#FF9900"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <animateTransform attributeName="transform" type="rotate" values="0 60 20; 14 60 20; -14 60 20; 8 60 20; 0 60 20" dur="0.9s" repeatCount="indefinite"/>
+    <!-- Clapper ball -->
+    <circle cx="60" cy="98" r="8" fill="#FF4400" stroke="#000" stroke-width="3"/>
+    <!-- Bell dome -->
+    <path d="M60,18 C46,18 42,32 40,54 C38,72 26,82 26,88 L94,88 C94,82 82,72 80,54 C78,32 74,18 60,18 Z" fill="url(#bellGrad)" stroke="#000" stroke-width="5" stroke-linejoin="round"/>
+    <!-- Top hanger loop -->
+    <path d="M54,18 C54,10 66,10 66,18" fill="none" stroke="#000" stroke-width="4.5" stroke-linecap="round"/>
+    <!-- Sound Waves -->
+    <path d="M18,46 C12,54 12,66 18,74" fill="none" stroke="#FFAA00" stroke-width="4" stroke-linecap="round"/>
+    <path d="M102,46 C108,54 108,66 102,74" fill="none" stroke="#FFAA00" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

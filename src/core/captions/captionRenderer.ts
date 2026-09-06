@@ -72,8 +72,9 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
 
   // Calculate scaled font size relative to 1080 canvas width
   const scaleFactor = width / 1080;
-  const fontSize = Math.round(template.font_size * scaleFactor * 1.35);
-  ctx.font = `900 ${fontSize}px "Montserrat", "Space Grotesk", "Bangers", "Impact", -apple-system, sans-serif`;
+  const fontSize = Math.round((template.font_size || 34) * scaleFactor * 1.35);
+  const fontFamily = template.font_family || '"Montserrat", "Space Grotesk", sans-serif';
+  ctx.font = `900 ${fontSize}px ${fontFamily}`;
   ctx.textBaseline = 'middle';
 
   // Support 2D Draggable Position (position_x and position_y)
@@ -102,7 +103,7 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
   let currentX = posX - totalLineWidth / 2;
 
   // Save bounding box for interactive dragging on canvas
-  const padH = 20 * scaleFactor;
+  const padH = 22 * scaleFactor;
   const padV = 16 * scaleFactor;
   const boxHeight = fontSize + padV * 2;
   lastSubtitleBounds = {
@@ -111,6 +112,22 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
     width: Math.max(10, ((totalLineWidth + padH * 2) / width) * 100),
     height: Math.max(6, (boxHeight / height) * 100),
   };
+
+  // Minimal Clean / Fade transition handling
+  if (template.fade_transition || template.animation === 'fade') {
+    const lineStartSec = lineWords[0].start;
+    const lineEndSec = lineWords[lineWords.length - 1].end;
+    const timeIntoLine = currentTime - lineStartSec;
+    const timeLeftInLine = lineEndSec - currentTime;
+    const fadeWindow = 0.22;
+    let lineAlpha = 1.0;
+    if (timeIntoLine < fadeWindow && timeIntoLine >= 0) {
+      lineAlpha = Math.max(0.15, timeIntoLine / fadeWindow);
+    } else if (timeLeftInLine < fadeWindow && timeLeftInLine >= 0) {
+      lineAlpha = Math.max(0.15, timeLeftInLine / fadeWindow);
+    }
+    ctx.globalAlpha = lineAlpha;
+  }
 
   // Optional background container for minimal/podcast templates
   if (template.background && template.background_color) {
@@ -121,13 +138,13 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
       posY - boxHeight / 2,
       totalLineWidth + padH * 2,
       boxHeight,
-      12 * scaleFactor
+      14 * scaleFactor
     );
     ctx.fill();
   }
 
   // Render each word with active karaoke styling
-  wordMeasurements.forEach((item) => {
+  wordMeasurements.forEach((item, idx) => {
     const isCurrentActive =
       currentTime >= item.word.start && currentTime <= item.word.end;
     const elapsedInWord = currentTime - item.word.start;
@@ -136,15 +153,16 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
 
     let wordScale = 1.0;
 
-    // SupoClip "word_pop" spring bounce animation on active karaoke word
-    if (isCurrentActive && template.word_pop) {
-      const popT = Math.min(1, Math.max(0, elapsedInWord / 0.12));
-      wordScale = 1.0 + 0.18 * Math.sin(popT * Math.PI);
+    // Scale bounce transform on active karaoke word (Beast / Hormozi / Pop styles)
+    if (isCurrentActive && (template.word_pop || template.animation === 'bounce')) {
+      const popT = Math.min(1, Math.max(0, elapsedInWord / 0.16));
+      const intensity = template.bounce_intensity ?? (template.animation === 'bounce' ? 0.35 : 0.20);
+      wordScale = 1.0 + intensity * Math.sin(popT * Math.PI);
     }
 
     // Hormozi Style Capsule Pill behind active word
     if (isCurrentActive && template.word_box && template.word_box_color) {
-      const pillPadH = 16 * scaleFactor;
+      const pillPadH = 18 * scaleFactor;
       const pillPadV = 10 * scaleFactor;
       const pillHeight = fontSize + pillPadV * 2;
       const pillRadius = pillHeight / 2; // Full rounded capsule
@@ -167,16 +185,23 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
       ctx.shadowBlur = isCurrentActive ? 24 * scaleFactor : 8 * scaleFactor;
     } else if (template.shadow) {
       ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
-      ctx.shadowBlur = 12 * scaleFactor;
+      ctx.shadowBlur = 14 * scaleFactor;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 5 * scaleFactor;
+      ctx.shadowOffsetY = 6 * scaleFactor;
+    }
+
+    // Determine active highlight color (with Beast alternating primary colors)
+    let activeHighlight = template.highlight_color;
+    if (template.alternating_colors && template.alternating_colors.length > 0) {
+      const colorIndex = (lineStartIdx + idx) % template.alternating_colors.length;
+      activeHighlight = template.alternating_colors[colorIndex];
     }
 
     // High contrast color selection
     let textColor = template.font_color;
     if (isCurrentActive) {
       // In pill box mode (e.g. Hormozi), text is dark on bright green pill
-      textColor = template.word_box ? '#05070a' : template.highlight_color;
+      textColor = template.word_box ? '#05070a' : activeHighlight;
     } else if (item.word.isEmphasis && template.emphasis_color) {
       textColor = template.emphasis_color;
     }
@@ -190,7 +215,7 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
     // Thick clean stroke with round joins (prevents letter spikes)
     if (template.stroke_color && template.stroke_width > 0 && !(isCurrentActive && template.word_box)) {
       ctx.strokeStyle = template.stroke_color;
-      ctx.lineWidth = Math.max(3, template.stroke_width * scaleFactor * 1.6);
+      ctx.lineWidth = Math.max(1.5, template.stroke_width * scaleFactor * 1.5);
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.strokeText(item.text, currentX, posY);

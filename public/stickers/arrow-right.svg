@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00F0FF"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0 0; 12 0; 0 0" dur="0.65s" repeatCount="indefinite"/>
+    <!-- Horizontal Arrow -->
+    <path d="M14,44 L60,44 L60,22 L104,60 L60,98 L60,76 L14,76 Z" fill="url(#neonGrad)" stroke="#002244" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M20,50 L56,50 L56,56 L20,56 Z" fill="#FFFFFF" opacity="0.6"/>
+  </g>
+</svg>

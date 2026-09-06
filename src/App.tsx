@@ -22,7 +22,7 @@ import { Navbar } from './components/Navbar';
 import { CanvasPlayer } from './components/Player/CanvasPlayer';
 import { Timeline } from './components/Timeline/Timeline';
 import { AssetBin } from './components/Sidebar/AssetBin';
-import { StickerLibrary } from './components/Sidebar/StickerLibrary';
+import { StickerStorePanel } from './components/Sidebar/StickerStorePanel';
 import { AutoJumpCutPanel } from './components/Sidebar/AutoJumpCutPanel';
 import { DynamicZoomPanel } from './components/Sidebar/DynamicZoomPanel';
 import { ViralMomentsPanel } from './components/Sidebar/ViralMomentsPanel';
@@ -487,7 +487,7 @@ export function App() {
               />
             )}
             {sidebarTab === 'stickers' && (
-              <StickerLibrary
+              <StickerStorePanel
                 currentTime={currentTime}
                 onAddOverlayAndSfx={handleAddOverlayAndSfx}
               />
@@ -576,6 +576,8 @@ export function App() {
           totalDuration={totalDuration}
           clipCount={clips.length}
           resolution={resolution}
+          captionTemplate={captionTemplate}
+          onUpdateCaptionTemplate={setCaptionTemplate}
         />
       </div>
 

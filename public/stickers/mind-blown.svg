@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="cloudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF5500"/>
+      <stop offset="50%" stop-color="#FFAA00"/>
+      <stop offset="100%" stop-color="#FFEE00"/>
+    </linearGradient>
+  </defs>
+  <!-- Face -->
+  <circle cx="60" cy="74" r="32" fill="#FFCC00" stroke="#000" stroke-width="3.5"/>
+  <!-- Eyes -->
+  <circle cx="48" cy="72" r="6" fill="#000">
+    <animate attributeName="r" values="6; 8; 6" dur="0.8s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="72" cy="72" r="6" fill="#000">
+    <animate attributeName="r" values="6; 8; 6" dur="0.8s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Mouth O-shape -->
+  <ellipse cx="60" cy="90" rx="8" ry="11" fill="#7A1A00" stroke="#000" stroke-width="2.5"/>
+  <!-- Exploding Cloud Shockwave -->
+  <g fill="url(#cloudGrad)" stroke="#B33600" stroke-width="2.5">
+    <path d="M30,42 C20,38 20,24 34,22 C36,12 50,10 58,18 C64,8 80,10 82,20 C96,20 98,34 90,42 C92,48 84,54 74,52 C68,54 52,54 46,50 C38,54 28,48 30,42 Z">
+      <animateTransform attributeName="transform" type="scale" values="1,1; 1.15,1.18; 1,1" dur="0.6s" repeatCount="indefinite" transform-origin="60 30"/>
+    </path>
+  </g>
+  <!-- Debris / Sparks -->
+  <circle cx="24" cy="20" r="3" fill="#FF3300">
+    <animate attributeName="cy" values="20; 12; 20" dur="0.6s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="94" cy="18" r="3.5" fill="#FF8800">
+    <animate attributeName="cy" values="18; 10; 18" dur="0.5s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="60" cy="6" r="4" fill="#FFFF00">
+    <animate attributeName="cy" values="6; 2; 6" dur="0.7s" repeatCount="indefinite"/>
+  </circle>
+</svg>

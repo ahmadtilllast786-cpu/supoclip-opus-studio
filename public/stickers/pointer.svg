@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Tap Ripple Ring -->
+  <circle cx="48" cy="24" r="16" fill="none" stroke="#38BDF8" stroke-width="3" opacity="0">
+    <animate attributeName="r" values="8; 26; 8" dur="1s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.8; 0; 0.8" dur="1s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Hand Cursor Pointer -->
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0 0; -2 -6; 0 0" dur="0.5s" repeatCount="indefinite"/>
+    <path d="M48,22 C48,16 54,16 54,22 L54,52 L62,46 C66,42 72,46 70,52 L64,68 C64,68 76,64 78,72 C78,80 66,98 56,104 C46,110 32,104 30,94 L30,68 C30,62 38,62 38,68 L38,48 C38,42 48,42 48,48 Z" fill="#F8FAFC" stroke="#0F172A" stroke-width="4.5" stroke-linejoin="round"/>
+  </g>
+</svg>

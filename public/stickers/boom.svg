@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <!-- Comic Burst Backdrop -->
+  <polygon points="60,6 72,34 100,16 90,44 118,48 96,68 114,88 86,88 92,116 68,98 56,118 48,94 20,110 30,82 4,76 26,58 6,36 34,40 28,12 52,30" fill="#FFE600" stroke="#000000" stroke-width="4">
+    <animateTransform attributeName="transform" type="rotate" values="0 60 60; 8 60 60; -8 60 60; 0 60 60" dur="0.8s" repeatCount="indefinite"/>
+  </polygon>
+  <!-- Inner Burst -->
+  <polygon points="60,18 70,38 90,26 82,46 102,50 86,66 98,80 78,80 82,98 66,86 58,100 52,82 32,94 40,74 20,70 36,56 22,40 42,44 38,24 54,36" fill="#FF2D55"/>
+  <!-- BOOM text -->
+  <text x="60" y="68" font-family="'Bangers', 'Impact', sans-serif" font-weight="900" font-size="28" fill="#FFFFFF" stroke="#000000" stroke-width="4" text-anchor="middle" letter-spacing="1">BOOM!</text>
+</svg>

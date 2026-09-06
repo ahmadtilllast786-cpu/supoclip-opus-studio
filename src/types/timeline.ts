@@ -4,7 +4,7 @@ export type SfxPreset = 'pop' | 'ding' | 'swoosh' | 'vine-boom' | 'camera-shutte
 
 export type OverlayAnimation = 'pop' | 'bounce' | 'swoosh' | 'slide-up' | 'glitch' | 'pulse';
 
-export type CaptionTemplateId = 'default' | 'hormozi' | 'mrbeast' | 'tiktok' | 'neon' | 'minimal' | 'podcast';
+export type CaptionTemplateId = 'default' | 'hormozi' | 'mrbeast' | 'beast' | 'tiktok' | 'neon' | 'minimal' | 'podcast';
 
 export interface CaptionTemplate {
   id: CaptionTemplateId;
@@ -30,6 +30,10 @@ export interface CaptionTemplate {
   max_words_per_line: number;
   position_x: number; // Normalized 0-1, default 0.5 (horizontal center)
   position_y: number; // Normalized 0-1, default 0.75 (vertical placement)
+  preset_id?: string;
+  alternating_colors?: string[]; // High-contrast primary colors for Beast style
+  fade_transition?: boolean;     // Soft fade for Minimal Clean
+  bounce_intensity?: number;     // Scale bounce magnitude on active spoken words
 }
 
 export interface ViralityScorecard {
@@ -90,6 +94,24 @@ export interface StickerOverlay {
   pairedSfx: SfxPreset | 'custom' | null;
   pairedSfxId?: string;
   isDisabled?: boolean;  // Per-item visibility bypass toggle
+  assetUrl?: string;     // Vector SVG or Lottie path, e.g. '/stickers/fire.svg'
+  assetType?: 'emoji' | 'svg' | 'lottie' | 'webp';
+  category?: string;     // 'trending' | 'arrows' | 'social'
+}
+
+export interface StickerCatalogItem {
+  id: string;
+  name: string;
+  category: 'trending' | 'arrows' | 'social' | string;
+  emoji: string;
+  label: string;
+  assetUrl: string;
+  previewUrl?: string;
+  format: 'svg' | 'lottie' | 'emoji';
+  sfx: SfxPreset;
+  sfxLabel: string;
+  defaultAnimation: OverlayAnimation;
+  tags: string[];
 }
 
 export interface DiagnosticSettings {

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <g>
+    <!-- Outer Ring -->
+    <circle cx="60" cy="60" r="48" fill="#FF2D55" stroke="#000" stroke-width="4">
+      <animate attributeName="r" values="48; 50; 48" dur="0.9s" repeatCount="indefinite"/>
+    </circle>
+    <!-- White Ring -->
+    <circle cx="60" cy="60" r="36" fill="#FFFFFF" stroke="#000" stroke-width="3.5"/>
+    <!-- Inner Red Ring -->
+    <circle cx="60" cy="60" r="24" fill="#FF2D55" stroke="#000" stroke-width="3"/>
+    <!-- Yellow Bullseye Center -->
+    <circle cx="60" cy="60" r="12" fill="#FFE600" stroke="#000" stroke-width="2.5">
+      <animate attributeName="r" values="12; 15; 12" dur="0.9s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Crosshair reticles -->
+    <line x1="60" y1="4" x2="60" y2="24" stroke="#000" stroke-width="4" stroke-linecap="round"/>
+    <line x1="60" y1="96" x2="60" y2="116" stroke="#000" stroke-width="4" stroke-linecap="round"/>
+    <line x1="4" y1="60" x2="24" y2="60" stroke="#000" stroke-width="4" stroke-linecap="round"/>
+    <line x1="96" y1="60" x2="116" y2="60" stroke="#000" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

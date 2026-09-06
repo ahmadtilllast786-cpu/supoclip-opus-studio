@@ -9,6 +9,7 @@ import {
 import { calculatePunchZoom } from './punchZoomEngine';
 import { renderTransition } from './transitions';
 import { renderCaptionsAndHookTitle } from '../captions/captionRenderer';
+import { getStickerImage } from '../stickers/stickerCatalogService';
 
 export interface RenderFrameOptions {
   currentTime: number;
@@ -367,21 +368,36 @@ function drawStickerOverlay(
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 6;
 
-  const fontSize = Math.floor(width * 0.14);
-  ctx.font = `${fontSize}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(overlay.emoji, 0, 0);
+  const stickerSize = Math.floor(width * 0.22);
+  let renderedAsset = false;
+
+  if (overlay.assetUrl) {
+    const img = getStickerImage(overlay.assetUrl);
+    if (img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, -stickerSize / 2, -stickerSize / 2, stickerSize, stickerSize);
+      renderedAsset = true;
+    }
+  }
+
+  if (!renderedAsset && overlay.emoji) {
+    const fontSize = Math.floor(width * 0.14);
+    ctx.font = `${fontSize}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(overlay.emoji, 0, 0);
+  }
 
   if (overlay.label) {
+    const labelFontSize = Math.max(12, Math.floor(width * 0.048));
+    const labelOffsetY = renderedAsset ? (stickerSize * 0.55) : (Math.floor(width * 0.14) * 0.65);
     ctx.shadowBlur = 8;
-    ctx.font = `900 ${Math.floor(fontSize * 0.35)}px "Montserrat", "Bangers", sans-serif`;
+    ctx.font = `900 ${labelFontSize}px "Montserrat", "Bangers", sans-serif`;
     ctx.fillStyle = '#facc15';
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 4;
     ctx.lineJoin = 'round';
-    ctx.strokeText(overlay.label.toUpperCase(), 0, fontSize * 0.65);
-    ctx.fillText(overlay.label.toUpperCase(), 0, fontSize * 0.65);
+    ctx.strokeText(overlay.label.toUpperCase(), 0, labelOffsetY);
+    ctx.fillText(overlay.label.toUpperCase(), 0, labelOffsetY);
   }
 
   ctx.restore();

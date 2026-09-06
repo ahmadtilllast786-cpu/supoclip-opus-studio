@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <g>
+    <animateTransform attributeName="transform" type="scale" values="1; 1.06; 1" dur="1s" repeatCount="indefinite" transform-origin="60 60"/>
+    <!-- Speech Bubble Outline -->
+    <path d="M20,24 C20,18 26,14 34,14 L86,14 C94,14 100,18 100,24 L100,74 C100,80 94,84 86,84 L48,84 L26,104 L30,84 L34,84 C26,84 20,80 20,74 Z" fill="#F8FAFC" stroke="#0F172A" stroke-width="4.5" stroke-linejoin="round"/>
+    <!-- Animated Typing Dots -->
+    <circle cx="44" cy="50" r="5" fill="#6366F1">
+      <animate attributeName="cy" values="50; 44; 50" dur="0.8s" repeatCount="indefinite" begin="0s"/>
+    </circle>
+    <circle cx="60" cy="50" r="5" fill="#EC4899">
+      <animate attributeName="cy" values="50; 44; 50" dur="0.8s" repeatCount="indefinite" begin="0.2s"/>
+    </circle>
+    <circle cx="76" cy="50" r="5" fill="#38BDF8">
+      <animate attributeName="cy" values="50; 44; 50" dur="0.8s" repeatCount="indefinite" begin="0.4s"/>
+    </circle>
+  </g>
+</svg>

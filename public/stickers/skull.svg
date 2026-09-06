@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <filter id="skullShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+  <g filter="url(#skullShadow)">
+    <!-- Skull Cranium -->
+    <path d="M60,18 C38,18 22,34 22,56 C22,68 28,78 36,84 L38,98 C38,102 44,104 48,104 L72,104 C76,104 82,102 82,98 L84,84 C92,78 98,68 98,56 C98,34 82,18 60,18 Z" fill="#F8FAFC" stroke="#0F172A" stroke-width="4">
+      <animateTransform attributeName="transform" type="rotate" values="0 60 60; -4 60 60; 4 60 60; -2 60 60; 0 60 60" dur="1.2s" repeatCount="indefinite"/>
+    </path>
+    <!-- Left Eye Socket -->
+    <ellipse cx="45" cy="56" rx="10" ry="12" fill="#0F172A">
+      <animate attributeName="ry" values="12; 4; 12" dur="2.5s" repeatCount="indefinite"/>
+    </ellipse>
+    <!-- Right Eye Socket -->
+    <ellipse cx="75" cy="56" rx="10" ry="12" fill="#0F172A">
+      <animate attributeName="ry" values="12; 4; 12" dur="2.5s" repeatCount="indefinite"/>
+    </ellipse>
+    <!-- Nose Cavity -->
+    <polygon points="60,68 56,76 64,76" fill="#0F172A"/>
+    <!-- Teeth Grid -->
+    <path d="M46,92 L46,104 M54,92 L54,104 M66,92 L66,104 M74,92 L74,104 M42,98 L78,98" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

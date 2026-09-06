@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <g>
+    <animateTransform attributeName="transform" type="scale" values="1; 1.08; 1" dur="0.7s" repeatCount="indefinite" transform-origin="60 60"/>
+    <!-- 100 Text in energetic red with bold shadow -->
+    <text x="58" y="70" font-family="'Montserrat', 'Impact', sans-serif" font-weight="900" font-size="52" fill="#E11D48" stroke="#000000" stroke-width="4" text-anchor="middle" letter-spacing="-2">100</text>
+    <text x="58" y="70" font-family="'Montserrat', 'Impact', sans-serif" font-weight="900" font-size="52" fill="#FF2D55" text-anchor="middle" letter-spacing="-2">100</text>
+    <!-- Double Underlines -->
+    <path d="M22,86 L98,86" stroke="#000000" stroke-width="7" stroke-linecap="round"/>
+    <path d="M22,86 L98,86" stroke="#FF2D55" stroke-width="5" stroke-linecap="round"/>
+    <path d="M26,96 L94,96" stroke="#000000" stroke-width="6" stroke-linecap="round"/>
+    <path d="M26,96 L94,96" stroke="#FF2D55" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

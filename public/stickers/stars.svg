@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="starGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFE600"/>
+      <stop offset="100%" stop-color="#FF9900"/>
+    </linearGradient>
+  </defs>
+  <!-- 5 Star arc -->
+  <g transform="translate(60,60)">
+    <!-- Big Center Star -->
+    <polygon points="0,-36 10,-12 36,-12 16,4 24,30 0,16 -24,30 -16,4 -36,-12 -10,-12" fill="url(#starGrad)" stroke="#000000" stroke-width="3">
+      <animateTransform attributeName="transform" type="scale" values="1; 1.15; 1" dur="0.8s" repeatCount="indefinite" transform-origin="0 0"/>
+    </polygon>
+    <!-- Left Small Star -->
+    <polygon points="-38,-8 -32,2 -20,2 -30,10 -26,22 -38,15 -50,22 -46,10 -56,2 -44,2" fill="url(#starGrad)" stroke="#000000" stroke-width="2.5">
+      <animateTransform attributeName="transform" type="scale" values="1; 1.1; 1" dur="0.8s" repeatCount="indefinite" begin="0.2s" transform-origin="-38 6"/>
+    </polygon>
+    <!-- Right Small Star -->
+    <polygon points="38,-8 44,2 56,2 46,10 50,22 38,15 26,22 30,10 20,2 32,2" fill="url(#starGrad)" stroke="#000000" stroke-width="2.5">
+      <animateTransform attributeName="transform" type="scale" values="1; 1.1; 1" dur="0.8s" repeatCount="indefinite" begin="0.4s" transform-origin="38 6"/>
+    </polygon>
+  </g>
+</svg>
