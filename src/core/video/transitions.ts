@@ -28,6 +28,8 @@ export function renderTransition(
   const easeProgress = easeInOutCubic(p);
 
   ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
 
   switch (type) {
     case 'dissolve': {
@@ -42,27 +44,20 @@ export function renderTransition(
     }
 
     case 'whip-pan': {
-      // Fast directional sweep to the left
+      // Fast crisp directional sweep to the left
       const offset = easeProgress * width;
 
       // Draw outgoing moving left
       ctx.save();
       ctx.translate(-offset, 0);
-      ctx.globalAlpha = 1 - p * 0.4;
+      ctx.globalAlpha = 1 - p * 0.3;
       ctx.drawImage(outgoingCanvas, 0, 0, width, height);
-      
-      // Speed blur streak simulation
-      if (p > 0.1 && p < 0.9) {
-        ctx.globalAlpha = 0.25;
-        ctx.drawImage(outgoingCanvas, -25, 0, width, height);
-        ctx.drawImage(outgoingCanvas, 25, 0, width, height);
-      }
       ctx.restore();
 
       // Draw incoming sliding in from right
       ctx.save();
       ctx.translate(width - offset, 0);
-      ctx.globalAlpha = 0.6 + p * 0.4;
+      ctx.globalAlpha = 1;
       ctx.drawImage(incomingCanvas, 0, 0, width, height);
       ctx.restore();
       break;

@@ -46,6 +46,8 @@ export function renderCompositedFrame(
   } = options;
 
   // Clear canvas background with dark studio backdrop
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.fillStyle = '#05070a';
   ctx.fillRect(0, 0, width, height);
 
@@ -198,6 +200,9 @@ function drawCroppedVideo(
     sy = (vHeight - sHeight) / 2;
   }
 
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
   try {
     ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
   } catch {
@@ -244,6 +249,8 @@ function drawTransitionedClips(
 
   const ctx1 = off1.getContext('2d');
   if (ctx1) {
+    ctx1.imageSmoothingEnabled = true;
+    ctx1.imageSmoothingQuality = 'high';
     ctx1.clearRect(0, 0, width, height);
     if (outgoingVideo.readyState >= 1 || outgoingVideo.videoWidth > 0) {
       drawCroppedVideo(ctx1, outgoingVideo, width, height);
@@ -252,6 +259,8 @@ function drawTransitionedClips(
 
   const ctx2 = off2.getContext('2d');
   if (ctx2) {
+    ctx2.imageSmoothingEnabled = true;
+    ctx2.imageSmoothingQuality = 'high';
     ctx2.clearRect(0, 0, width, height);
     if (incomingVideo.readyState >= 1 || incomingVideo.videoWidth > 0) {
       drawCroppedVideo(ctx2, incomingVideo, width, height);

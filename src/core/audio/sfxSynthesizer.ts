@@ -14,6 +14,21 @@ export function getAudioContext(): AudioContext {
   return audioCtxInstance;
 }
 
+// Cached white noise buffer to prevent synchronous CPU allocations during playback
+let cachedNoiseBuffer: AudioBuffer | null = null;
+
+function getSharedNoiseBuffer(ctx: BaseAudioContext): AudioBuffer {
+  if (!cachedNoiseBuffer || cachedNoiseBuffer.sampleRate !== ctx.sampleRate) {
+    const bufferSize = Math.floor(ctx.sampleRate * 0.3);
+    cachedNoiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = cachedNoiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = Math.random() * 2 - 1;
+    }
+  }
+  return cachedNoiseBuffer;
+}
+
 /**
  * Procedurally synthesizes sound effects using Web Audio API nodes.
  * Works both with real-time AudioContext (for timeline playback)
@@ -77,16 +92,9 @@ export function synthesizeSfx(
     }
 
     case 'swoosh': {
-      // Swept white noise through bandpass filter
-      const bufferSize = Math.floor(ctx.sampleRate * 0.25);
-      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        output[i] = Math.random() * 2 - 1;
-      }
-
+      // Swept white noise through bandpass filter with cached buffer
       const whiteNoise = ctx.createBufferSource();
-      whiteNoise.buffer = noiseBuffer;
+      whiteNoise.buffer = getSharedNoiseBuffer(ctx);
 
       const filter = ctx.createBiquadFilter();
       filter.type = 'bandpass';

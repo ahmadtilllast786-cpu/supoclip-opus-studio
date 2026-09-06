@@ -71,6 +71,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const [isDraggingCaption, setIsDraggingCaption] = useState(false);
   const [captionDragOffset, setCaptionDragOffset] = useState({ x: 0, y: 0 });
   const lastTriggeredSfxRef = useRef<Set<string>>(new Set());
+  const lastStateUpdateTimeRef = useRef(0);
 
   // Mutable state refs to prevent re-instantiating RAF loop on every frame
   const currentTimeRef = useRef(currentTime);
@@ -78,14 +79,20 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const clipsRef = useRef(clips);
   const videoElementsRef = useRef(videoElements);
   const isMutedRef = useRef(isMuted);
+  const sfxTracksRef = useRef(sfxTracks);
 
   useEffect(() => {
     currentTimeRef.current = currentTime;
   }, [currentTime]);
 
   useEffect(() => {
+    sfxTracksRef.current = sfxTracks;
+  }, [sfxTracks]);
+
+  useEffect(() => {
     isPlayingRef.current = isPlaying;
     if (!isPlaying) {
+      lastTriggeredSfxRef.current.clear();
       // When pausing, immediately pause all active video elements
       videoElementsRef.current.forEach((vid) => {
         if (!vid.paused) vid.pause();
@@ -124,7 +131,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     let lastTimestamp = performance.now();
 
     const loop = (timestamp: number) => {
-      const delta = Math.min(0.1, (timestamp - lastTimestamp) / 1000);
+      const delta = Math.min(0.067, (timestamp - lastTimestamp) / 1000);
       lastTimestamp = timestamp;
 
       let time = currentTimeRef.current;
@@ -132,6 +139,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       const curVideoElements = videoElementsRef.current;
       const playing = isPlayingRef.current;
       const muted = isMutedRef.current;
+      const curSfx = sfxTracksRef.current;
 
       if (playing && totalDuration > 0) {
         // Locate active clip at current playhead
@@ -168,7 +176,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
               setIsPlaying(false);
             }
           } else {
-            // Keep active clip playing smoothly in sync
+            // Keep active clip playing smoothly in hardware sync without seek loops
             if (activeVideo) {
               activeVideo.muted = muted;
               activeVideo.volume = activeClip.volume;
@@ -177,28 +185,36 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                 activeClip.inPoint + (time - activeClip.startTimelineTime) * activeClip.speed;
 
               if (activeVideo.paused && !activeVideo.seeking) {
-                if (Math.abs(activeVideo.currentTime - targetVideoTime) > 0.1) {
+                // Initial start: seek once to target time and start playback
+                if (Math.abs(activeVideo.currentTime - targetVideoTime) > 0.05) {
                   activeVideo.currentTime = targetVideoTime;
                 }
                 activeVideo.play().catch(() => {});
-              } else if (!activeVideo.seeking && Math.abs(activeVideo.currentTime - targetVideoTime) > 0.12) {
-                activeVideo.currentTime = targetVideoTime;
+                time += delta;
+              } else if (!activeVideo.seeking && !activeVideo.paused) {
+                // Video is actively playing natively: let the video's hardware clock drive timeline time!
+                const vidElapsed = (activeVideo.currentTime - activeClip.inPoint) / (activeClip.speed || 1.0);
+                if (!isNaN(vidElapsed) && vidElapsed >= 0) {
+                  time = activeClip.startTimelineTime + Math.min(activeClip.duration, vidElapsed);
+                } else {
+                  time += delta;
+                }
+              } else {
+                time += delta;
               }
+            } else {
+              time += delta;
             }
 
-            // Pre-roll and fluidly play upcoming clip during transition window
+            // Pre-roll incoming clip smoothly during transition window
             if (nextClip && nextVideo && timeLeftInClip <= transitionDuration + 0.1) {
-              const transProgress = Math.max(0, 1 - timeLeftInClip / transitionDuration);
-              const targetNextTime = nextClip.inPoint + transProgress * transitionDuration * nextClip.speed;
               nextVideo.muted = muted;
               nextVideo.volume = nextClip.volume;
               if (nextVideo.paused && !nextVideo.seeking) {
-                nextVideo.currentTime = targetNextTime;
+                nextVideo.currentTime = nextClip.inPoint;
                 nextVideo.play().catch(() => {});
               }
             }
-
-            time += delta;
           }
 
           // Pause all video elements that are not active and not part of the active transition
@@ -221,11 +237,30 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
           });
         }
 
+        // Trigger synchronized SFX nodes without React state delay
+        curSfx.forEach((sfx) => {
+          if (time >= sfx.startTimelineTime && time < sfx.startTimelineTime + 0.15) {
+            if (!lastTriggeredSfxRef.current.has(sfx.id)) {
+              lastTriggeredSfxRef.current.add(sfx.id);
+              if (!isMutedRef.current) {
+                playSfxInstant(sfx.preset, sfx.volume);
+              }
+            }
+          } else if (time < sfx.startTimelineTime) {
+            lastTriggeredSfxRef.current.delete(sfx.id);
+          }
+        });
+
         currentTimeRef.current = time;
-        setCurrentTime(time);
+
+        // Throttle React state re-renders to ~25fps while maintaining 60fps canvas drawing
+        if (timestamp - lastStateUpdateTimeRef.current > 40) {
+          lastStateUpdateTimeRef.current = timestamp;
+          setCurrentTime(time);
+        }
       }
 
-      // Render canvas frame
+      // Render canvas frame at 60fps
       const canvas = canvasRef.current;
       if (canvas) {
         const ctx = canvas.getContext('2d');
@@ -276,28 +311,6 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       });
     }
   }, [currentTime, isPlaying, clips, videoElements]);
-
-  // 3. Trigger Synchronized SFX Nodes when Playhead passes sticker start time
-  useEffect(() => {
-    if (!isPlaying) {
-      lastTriggeredSfxRef.current.clear();
-      return;
-    }
-
-    sfxTracks.forEach((sfx) => {
-      // If playhead just passed SFX start time within a 150ms window
-      if (currentTime >= sfx.startTimelineTime && currentTime < sfx.startTimelineTime + 0.15) {
-        if (!lastTriggeredSfxRef.current.has(sfx.id)) {
-          lastTriggeredSfxRef.current.add(sfx.id);
-          if (!isMuted) {
-            playSfxInstant(sfx.preset, sfx.volume);
-          }
-        }
-      } else if (currentTime < sfx.startTimelineTime) {
-        lastTriggeredSfxRef.current.delete(sfx.id);
-      }
-    });
-  }, [currentTime, isPlaying, sfxTracks, isMuted]);
 
   // Format time as MM:SS.ms
   const formatTime = (seconds: number) => {
@@ -421,7 +434,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       {/* Dynamic Status / Punch Zoom Indicator Badge */}
       <div className="absolute top-4 left-6 flex items-center space-x-2 z-20">
         {punchZoom.isActive && (
-          <div className="flex items-center space-x-1.5 bg-amber-500/20 border border-amber-500/50 text-amber-300 text-xs font-bold px-2.5 py-1 rounded-full shadow-lg backdrop-blur-md animate-pulse">
+          <div className="flex items-center space-x-1.5 bg-amber-950/90 border border-amber-500/60 text-amber-300 text-xs font-bold px-2.5 py-1 rounded-full shadow-xl animate-pulse">
             <Crosshair className="w-3.5 h-3.5 text-amber-400" />
             <span>PUNCH ZOOM {punchZoom.scale.toFixed(2)}x</span>
           </div>
@@ -430,7 +443,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
         {overlays.some(
           (o) => currentTime >= o.startTimelineTime && currentTime < o.startTimelineTime + o.duration
         ) && (
-          <div className="flex items-center space-x-1.5 bg-pink-500/20 border border-pink-500/50 text-pink-300 text-xs font-bold px-2.5 py-1 rounded-full shadow-lg backdrop-blur-md">
+          <div className="flex items-center space-x-1.5 bg-pink-950/90 border border-pink-500/60 text-pink-300 text-xs font-bold px-2.5 py-1 rounded-full shadow-xl">
             <Sparkles className="w-3.5 h-3.5 text-pink-400" />
             <span>SYNCED SFX ACTIVE</span>
           </div>
@@ -512,7 +525,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       </div>
 
       {/* Floating Transport Bar */}
-      <div className="mt-3 flex items-center space-x-4 bg-slate-900/95 border border-slate-800 px-4 py-2 rounded-xl shadow-xl backdrop-blur-md z-20">
+      <div className="mt-3 flex items-center space-x-4 bg-slate-900/95 border border-slate-800 px-4 py-2 rounded-xl shadow-2xl z-20">
         {/* Reset to 0 */}
         <button
           onClick={() => setCurrentTime(0)}
