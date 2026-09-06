@@ -122,14 +122,41 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Standardized track header sidebar width (w-32 = 128px)
   const TRACK_HEADER_WIDTH = 128;
 
-  // Exact ending boundary time of all video clips
-  const projectEndSec = clips.reduce(
+  // Trailing dead space clamped to exactly 5 seconds
+  const trailingDeadSpaceSec = 5;
+
+  // Exact ending boundary time across ALL tracks (Clips, Overlays, SFX)
+  const clipsEndSec = clips.reduce(
     (acc, c) => Math.max(acc, c.startTimelineTime + c.duration),
     0
   );
+  const overlaysEndSec = overlays.reduce(
+    (acc, o) => Math.max(acc, o.startTimelineTime + o.duration),
+    0
+  );
+  const sfxEndSec = sfxTracks.reduce(
+    (acc, s) => Math.max(acc, s.startTimelineTime + s.duration),
+    0
+  );
+  const projectEndSec = Math.max(clipsEndSec, overlaysEndSec, sfxEndSec, 0);
 
-  // Total project duration with comfortable UI breathing room
-  const totalDuration = Math.max(10, projectEndSec);
+  // Total project duration including clamped trailing 5s dead space
+  const totalDuration = projectEndSec > 0 ? projectEndSec + trailingDeadSpaceSec : 10;
+
+  // Dragging Item State (Clips, Overlays, SFX)
+  const [draggingItem, setDraggingItem] = useState<{
+    id: string;
+    type: 'clip' | 'overlay' | 'sfx';
+    initialStartTime: number;
+    duration: number;
+    startX: number;
+    currentStartTime: number;
+  } | null>(null);
+
+  // Active Drop Zone Highlight State
+  const [dragOverTrack, setDragOverTrack] = useState<'v2' | 'v1' | 'a2' | null>(null);
+  const hasMovedRef = useRef(false);
+  const rafItemDragRef = useRef<number | null>(null);
 
   // Measure container width dynamically with ResizeObserver
   useEffect(() => {
@@ -145,13 +172,14 @@ export const Timeline: React.FC<TimelineProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  // Compute fit-to-screen pixelsPerSecond so the entire video ends cleanly inside one screen visual
+  // Compute fit-to-screen pixelsPerSecond so the entire video + 5s dead space ends cleanly inside one screen visual
   const calculateFitPps = useCallback(
     (cWidth: number, endSec: number) => {
-      const availableLane = Math.max(200, cWidth - TRACK_HEADER_WIDTH - 60);
-      return Math.max(15, Math.min(350, availableLane / Math.max(0.1, endSec)));
+      const availableLane = Math.max(200, cWidth - TRACK_HEADER_WIDTH - 20);
+      const targetSec = endSec > 0 ? endSec + trailingDeadSpaceSec : 10;
+      return Math.max(10, Math.min(200, availableLane / targetSec));
     },
-    [TRACK_HEADER_WIDTH]
+    [TRACK_HEADER_WIDTH, trailingDeadSpaceSec]
   );
 
   // When auto-fit is active or container width / project changes, sync pixelsPerSecond
@@ -162,10 +190,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     }
   }, [isAutoFit, containerWidth, projectEndSec, calculateFitPps]);
 
-  // Total horizontal canvas width:
-  // When isAutoFit is true, timelineWidth matches containerWidth exactly (0 horizontal scrollbar!).
-  // When zoomed in, timelineWidth expands allowing smooth horizontal panning.
-  const naturalContentWidth = TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond + 60;
+  // Clamped horizontal canvas width:
+  // When isAutoFit is true, timelineWidth matches containerWidth exactly (0 horizontal scrollbar).
+  // When zoomed in, timelineWidth expands up to projectEndSec + exactly 5s trailing dead space.
+  const naturalContentWidth =
+    TRACK_HEADER_WIDTH + (projectEndSec + trailingDeadSpaceSec) * pixelsPerSecond;
   const timelineWidth =
     isAutoFit && containerWidth > 0
       ? containerWidth
@@ -174,7 +203,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Has any active selection
   const hasSelection = Boolean(selectedClipId || selectedOverlayId || selectedSfxId);
 
-  // Calculate magnetic snap points
+  // Calculate magnetic snap points across all elements
   const getSnapPoints = useCallback((): number[] => {
     const points = new Set<number>([0, Number(projectEndSec.toFixed(3))]);
     clips.forEach((c) => {
@@ -185,11 +214,15 @@ export const Timeline: React.FC<TimelineProps> = ({
       points.add(Number(o.startTimelineTime.toFixed(3)));
       points.add(Number((o.startTimelineTime + o.duration).toFixed(3)));
     });
+    sfxTracks.forEach((s) => {
+      points.add(Number(s.startTimelineTime.toFixed(3)));
+      points.add(Number((s.startTimelineTime + s.duration).toFixed(3)));
+    });
     zoomKeyframes.forEach((k) => {
       points.add(Number(k.startTimelineTime.toFixed(3)));
     });
     return Array.from(points);
-  }, [clips, overlays, zoomKeyframes, projectEndSec]);
+  }, [clips, overlays, sfxTracks, zoomKeyframes, projectEndSec]);
 
   // Split Clip at specific timeline timestamp
   const handleSplitClipAt = useCallback(
@@ -356,13 +389,14 @@ export const Timeline: React.FC<TimelineProps> = ({
   const handleZoomToFit = useCallback(() => {
     setIsAutoFit(true);
     if (!containerRef.current || projectEndSec <= 0) return;
-    const availableWidth = Math.max(200, containerRef.current.clientWidth - TRACK_HEADER_WIDTH - 60);
-    const calculatedPps = Math.max(15, Math.min(350, availableWidth / projectEndSec));
+    const availableWidth = Math.max(200, containerRef.current.clientWidth - TRACK_HEADER_WIDTH - 20);
+    const targetDuration = projectEndSec + trailingDeadSpaceSec;
+    const calculatedPps = Math.max(10, Math.min(200, availableWidth / targetDuration));
     setPixelsPerSecond(calculatedPps);
     containerRef.current.scrollTo({ left: 0, behavior: 'smooth' });
-  }, [projectEndSec, TRACK_HEADER_WIDTH]);
+  }, [projectEndSec, TRACK_HEADER_WIDTH, trailingDeadSpaceSec]);
 
-  // Smooth wheel zoom listener (Ctrl / Alt / Meta + Wheel or Pinch)
+  // Smooth wheel zoom listener (Ctrl / Alt / Meta + Wheel or Pinch) calibrated to 10 - 200 px/s
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -373,7 +407,7 @@ export const Timeline: React.FC<TimelineProps> = ({
         const factor = e.deltaY < 0 ? 1.12 : 0.89;
         setIsAutoFit(false);
         setPixelsPerSecond((prev) => {
-          return Math.max(15, Math.min(350, Math.round(prev * factor)));
+          return Math.max(10, Math.min(200, Math.round(prev * factor)));
         });
       }
     };
@@ -562,6 +596,229 @@ export const Timeline: React.FC<TimelineProps> = ({
     window.addEventListener('mouseup', handleTrimEnd);
   };
 
+  // Universal Item Drag Engine for Clips, Overlays, and SFX
+  const handleItemDragStart = (
+    e: React.PointerEvent,
+    id: string,
+    type: 'clip' | 'overlay' | 'sfx',
+    initialStartTime: number,
+    duration: number
+  ) => {
+    // Only primary left button & select tool mode
+    if (e.button !== 0 || toolMode !== 'select') return;
+    if (type === 'clip' && isVideoLocked) return;
+    if (type === 'overlay' && isOverlayLocked) return;
+    if (type === 'sfx' && isSfxLocked) return;
+
+    // Ignore if clicking buttons, trim handles, or inputs
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('[data-trim-handle]')) return;
+
+    e.stopPropagation();
+    hasMovedRef.current = false;
+
+    // Immediately select target item
+    if (type === 'clip') {
+      setSelectedClipId(id);
+      setSelectedOverlayId(null);
+      if (setSelectedSfxId) setSelectedSfxId(null);
+    } else if (type === 'overlay') {
+      setSelectedOverlayId(id);
+      setSelectedClipId(null);
+      if (setSelectedSfxId) setSelectedSfxId(null);
+    } else if (type === 'sfx') {
+      if (setSelectedSfxId) setSelectedSfxId(id);
+      setSelectedClipId(null);
+      setSelectedOverlayId(null);
+    }
+
+    const startX = e.clientX;
+
+    setDraggingItem({
+      id,
+      type,
+      initialStartTime,
+      duration,
+      startX,
+      currentStartTime: initialStartTime,
+    });
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaPx = moveEvent.clientX - startX;
+      if (Math.abs(deltaPx) > 3) {
+        hasMovedRef.current = true;
+      }
+
+      if (rafItemDragRef.current !== null) cancelAnimationFrame(rafItemDragRef.current);
+      rafItemDragRef.current = requestAnimationFrame(() => {
+        const deltaSec = deltaPx / pixelsPerSecond;
+        let newStart = Math.max(0, initialStartTime + deltaSec);
+
+        // Magnetic Snapping along Time Axis
+        if (isSnappingEnabled) {
+          const snapThresholdSec = 10 / pixelsPerSecond;
+          const snapPoints = getSnapPoints().filter((p) => {
+            return (
+              Math.abs(p - initialStartTime) > 0.05 &&
+              Math.abs(p - (initialStartTime + duration)) > 0.05
+            );
+          });
+          snapPoints.push(currentTime); // Snap to Playhead
+
+          let snapped = false;
+          // Snap Start edge
+          for (const pt of snapPoints) {
+            if (Math.abs(pt - newStart) <= snapThresholdSec) {
+              newStart = pt;
+              setSnapGuideTime(pt);
+              snapped = true;
+              break;
+            }
+          }
+          // Snap End edge
+          if (!snapped) {
+            for (const pt of snapPoints) {
+              if (Math.abs(pt - (newStart + duration)) <= snapThresholdSec) {
+                newStart = Math.max(0, pt - duration);
+                setSnapGuideTime(pt);
+                snapped = true;
+                break;
+              }
+            }
+          }
+          if (!snapped) {
+            setSnapGuideTime(null);
+          }
+        } else {
+          setSnapGuideTime(null);
+        }
+
+        setDraggingItem((prev) => (prev ? { ...prev, currentStartTime: newStart } : null));
+
+        // Live-update position in state for buttery smooth responsiveness
+        if (type === 'clip') {
+          setClips((prev) =>
+            prev.map((c) => (c.id === id ? { ...c, startTimelineTime: newStart } : c))
+          );
+        } else if (type === 'overlay') {
+          setOverlays((prev) =>
+            prev.map((o) => (o.id === id ? { ...o, startTimelineTime: newStart } : o))
+          );
+        } else if (type === 'sfx') {
+          setSfxTracks((prev) =>
+            prev.map((s) => (s.id === id ? { ...s, startTimelineTime: newStart } : s))
+          );
+        }
+      });
+    };
+
+    const handlePointerUp = () => {
+      setDraggingItem(null);
+      setSnapGuideTime(null);
+      if (rafItemDragRef.current !== null) {
+        cancelAnimationFrame(rafItemDragRef.current);
+        rafItemDragRef.current = null;
+      }
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+  };
+
+  // Overlay Trimming Logic (Start & End Handles)
+  const handleOverlayTrimStart = (
+    e: React.PointerEvent,
+    overlayId: string,
+    edge: 'left' | 'right'
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (isOverlayLocked) return;
+    const ov = overlays.find((o) => o.id === overlayId);
+    if (!ov) return;
+
+    const startX = e.clientX;
+    const initialStart = ov.startTimelineTime;
+    const initialDuration = ov.duration;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const deltaSec = (moveEvent.clientX - startX) / pixelsPerSecond;
+      setOverlays((prev) =>
+        prev.map((o) => {
+          if (o.id !== overlayId) return o;
+          if (edge === 'left') {
+            const maxStart = initialStart + initialDuration - 0.2;
+            const newStart = Math.max(0, Math.min(maxStart, initialStart + deltaSec));
+            const newDuration = initialDuration - (newStart - initialStart);
+            return { ...o, startTimelineTime: newStart, duration: Math.max(0.2, newDuration) };
+          } else {
+            const newDuration = Math.max(0.2, initialDuration + deltaSec);
+            return { ...o, duration: newDuration };
+          }
+        })
+      );
+    };
+
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+  };
+
+  // SFX Trimming Logic (Start & End Handles)
+  const handleSfxTrimStart = (
+    e: React.PointerEvent,
+    sfxId: string,
+    edge: 'left' | 'right'
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (isSfxLocked) return;
+    const sfx = sfxTracks.find((s) => s.id === sfxId);
+    if (!sfx) return;
+
+    const startX = e.clientX;
+    const initialStart = sfx.startTimelineTime;
+    const initialDuration = sfx.duration;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const deltaSec = (moveEvent.clientX - startX) / pixelsPerSecond;
+      setSfxTracks((prev) =>
+        prev.map((s) => {
+          if (s.id !== sfxId) return s;
+          if (edge === 'left') {
+            const maxStart = initialStart + initialDuration - 0.2;
+            const newStart = Math.max(0, Math.min(maxStart, initialStart + deltaSec));
+            const newDuration = initialDuration - (newStart - initialStart);
+            return { ...s, startTimelineTime: newStart, duration: Math.max(0.2, newDuration) };
+          } else {
+            const newDuration = Math.max(0.2, initialDuration + deltaSec);
+            return { ...s, duration: newDuration };
+          }
+        })
+      );
+    };
+
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+  };
+
   // Keyboard Shortcuts Listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -719,6 +976,16 @@ export const Timeline: React.FC<TimelineProps> = ({
             </div>
           )}
 
+          {/* Start Boundary Vertical Line across all tracks */}
+          <div
+            style={{ left: `${TRACK_HEADER_WIDTH}px` }}
+            className="absolute top-7 bottom-0 w-0.5 bg-emerald-500/80 shadow-[0_0_8px_rgba(16,185,129,0.6)] z-20 pointer-events-none"
+          >
+            <div className="absolute bottom-2 -translate-x-1/2 px-1.5 py-0.5 bg-emerald-500/90 text-slate-950 font-mono font-black text-[9px] rounded uppercase shadow whitespace-nowrap">
+              Start
+            </div>
+          </div>
+
           {/* Project End Boundary Vertical Line across all tracks */}
           {projectEndSec > 0 && (
             <div
@@ -731,15 +998,38 @@ export const Timeline: React.FC<TimelineProps> = ({
             </div>
           )}
 
-          {/* Inactive Hatched Zone Past End of Video */}
+          {/* Inactive Hatched Zone Past End of Video (Trailing 5s Dead Space) */}
           {projectEndSec > 0 && (
             <div
               style={{
                 left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px`,
-                width: `${timelineWidth - (TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond)}px`,
+                width: `${Math.max(0, timelineWidth - (TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond))}px`,
               }}
               className="absolute top-7 bottom-0 bg-[repeating-linear-gradient(45deg,rgba(15,23,42,0.6),rgba(15,23,42,0.6)_10px,rgba(30,41,59,0.3)_10px,rgba(30,41,59,0.3)_20px)] border-l border-amber-500/40 pointer-events-none z-10"
             />
+          )}
+
+          {/* Floating Time Badge while Dragging Elements */}
+          {draggingItem && (
+            <div
+              style={{
+                left: `${TRACK_HEADER_WIDTH + draggingItem.currentStartTime * pixelsPerSecond}px`,
+                top:
+                  draggingItem.type === 'overlay'
+                    ? '32px'
+                    : draggingItem.type === 'clip'
+                    ? '88px'
+                    : '240px',
+              }}
+              className="absolute z-50 pointer-events-none -translate-x-1/2 px-2.5 py-1 bg-indigo-600 text-white font-mono text-[11px] font-bold rounded-lg shadow-2xl border border-indigo-300/80 flex items-center gap-1.5 ring-2 ring-indigo-400/50"
+            >
+              <MoveHorizontal className="w-3.5 h-3.5 text-cyan-300 animate-pulse" />
+              <span>{draggingItem.currentStartTime.toFixed(2)}s</span>
+              <span className="text-indigo-200 text-[9px]">
+                ({draggingItem.currentStartTime - draggingItem.initialStartTime >= 0 ? '+' : ''}
+                {(draggingItem.currentStartTime - draggingItem.initialStartTime).toFixed(2)}s)
+              </span>
+            </div>
           )}
 
           {/* ========================================================= */}
@@ -762,8 +1052,72 @@ export const Timeline: React.FC<TimelineProps> = ({
               itemCount={overlays.length}
             />
 
-            {/* Lane Items */}
-            <div className="relative flex-1 h-full flex items-center">
+            {/* Lane Items & Dedicated Drop Zone */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                if (dragOverTrack !== 'v2') setDragOverTrack('v2');
+              }}
+              onDragLeave={() => {
+                setDragOverTrack((prev) => (prev === 'v2' ? null : prev));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverTrack(null);
+                if (isOverlayLocked) return;
+
+                const rect = e.currentTarget.getBoundingClientRect();
+                const dropX = e.clientX - rect.left;
+                const dropSec = Math.max(0, dropX / pixelsPerSecond);
+
+                try {
+                  const rawData = e.dataTransfer.getData('application/json');
+                  if (rawData) {
+                    const parsed = JSON.parse(rawData);
+                    if (parsed.type === 'sticker' && parsed.item) {
+                      const item = parsed.item;
+                      const newOverlay: StickerOverlay = {
+                        id: `overlay-${Date.now()}`,
+                        emoji: item.emoji || '✨',
+                        label: item.label || 'Sticker',
+                        startTimelineTime: dropSec,
+                        duration: 2.0,
+                        x: 50,
+                        y: 40,
+                        scale: 1,
+                        rotation: 0,
+                        animation: (item.animation as any) || 'bounce',
+                        pairedSfx: item.sfx || null,
+                      };
+                      setOverlays((prev) => [...prev, newOverlay]);
+                      setSelectedOverlayId(newOverlay.id);
+
+                      // If sticker has sound effect, auto-pair SFX item
+                      if (item.sfx && !isSfxLocked) {
+                        const newSfx: SfxTrackItem = {
+                          id: `sfx-${Date.now()}`,
+                          name: item.sfxLabel || `${item.label} Sound`,
+                          preset: item.sfx,
+                          startTimelineTime: dropSec,
+                          duration: 0.8,
+                          volume: 1.0,
+                          isMuted: false,
+                        };
+                        setSfxTracks((prev) => [...prev, newSfx]);
+                      }
+                    }
+                  }
+                } catch (err) {
+                  console.error('Failed to parse dropped overlay:', err);
+                }
+              }}
+              className={`relative flex-1 h-full flex items-center transition-all ${
+                dragOverTrack === 'v2'
+                  ? 'bg-purple-950/40 ring-2 ring-purple-400/80 ring-inset'
+                  : ''
+              }`}
+            >
               {overlays.map((ov) => {
                 const isSelected = selectedOverlayId === ov.id;
                 const leftPx = ov.startTimelineTime * pixelsPerSecond;
@@ -773,8 +1127,12 @@ export const Timeline: React.FC<TimelineProps> = ({
                   <div
                     key={ov.id}
                     data-no-scrub="true"
+                    onPointerDown={(e) =>
+                      handleItemDragStart(e, ov.id, 'overlay', ov.startTimelineTime, ov.duration)
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (hasMovedRef.current) return;
                       if (toolMode === 'select' && !isOverlayLocked) {
                         setSelectedOverlayId(ov.id);
                         setSelectedClipId(null);
@@ -785,17 +1143,43 @@ export const Timeline: React.FC<TimelineProps> = ({
                       left: `${leftPx}px`,
                       width: `${widthPx}px`,
                     }}
-                    className={`absolute h-10 rounded-lg flex items-center px-2 border-2 cursor-pointer transition-all shadow-md overflow-hidden ${
+                    className={`absolute h-10 rounded-lg flex items-center px-2 border-2 transition-all shadow-md select-none group ${
+                      toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                    } ${
                       isSelected
-                        ? 'bg-purple-900/90 border-purple-400 ring-2 ring-purple-400/50 shadow-purple-950/80'
-                        : 'bg-purple-950/70 border-purple-700/60 hover:border-purple-500'
+                        ? 'bg-purple-900/90 border-purple-400 ring-2 ring-purple-400/50 shadow-purple-950/80 z-20'
+                        : 'bg-purple-950/70 border-purple-700/60 hover:border-purple-500 z-10'
                     }`}
                   >
-                    <span className="text-base mr-1.5 shrink-0 select-none">{ov.emoji}</span>
+                    {/* Left Trim Handle */}
+                    {!isOverlayLocked && (
+                      <div
+                        data-trim-handle="true"
+                        onPointerDown={(e) => handleOverlayTrimStart(e, ov.id, 'left')}
+                        title="Trim overlay start"
+                        className="absolute left-0 top-0 bottom-0 w-2.5 bg-purple-500/30 hover:bg-purple-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-purple-500/60"
+                      >
+                        <div className="w-0.5 h-3 bg-white/80 rounded" />
+                      </div>
+                    )}
+
+                    <span className="text-base mr-1.5 shrink-0 select-none pl-1">{ov.emoji}</span>
                     <span className="text-xs font-semibold text-purple-200 truncate">{ov.label}</span>
-                    <span className="ml-auto text-[9px] font-mono text-purple-300/70 shrink-0">
+                    <span className="ml-auto text-[9px] font-mono text-purple-300/70 shrink-0 pr-1">
                       {ov.duration.toFixed(1)}s
                     </span>
+
+                    {/* Right Trim Handle */}
+                    {!isOverlayLocked && (
+                      <div
+                        data-trim-handle="true"
+                        onPointerDown={(e) => handleOverlayTrimStart(e, ov.id, 'right')}
+                        title="Trim overlay duration (end)"
+                        className="absolute right-0 top-0 bottom-0 w-2.5 bg-purple-500/30 hover:bg-purple-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-purple-500/60"
+                      >
+                        <div className="w-0.5 h-3 bg-white/80 rounded" />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -822,8 +1206,26 @@ export const Timeline: React.FC<TimelineProps> = ({
               itemCount={clips.length}
             />
 
-            {/* Lane Items */}
-            <div className="relative flex-1 h-full flex items-center">
+            {/* Lane Items & Dedicated Drop Zone */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                if (dragOverTrack !== 'v1') setDragOverTrack('v1');
+              }}
+              onDragLeave={() => {
+                setDragOverTrack((prev) => (prev === 'v1' ? null : prev));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverTrack(null);
+              }}
+              className={`relative flex-1 h-full flex items-center transition-all ${
+                dragOverTrack === 'v1'
+                  ? 'bg-indigo-950/40 ring-2 ring-indigo-400/80 ring-inset'
+                  : ''
+              }`}
+            >
               {clips.map((clip, idx) => {
                 const isSelected = selectedClipId === clip.id;
                 const isTrimming = trimmingClipId === clip.id;
@@ -834,8 +1236,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                   <div
                     key={clip.id}
                     data-no-scrub="true"
+                    onPointerDown={(e) => {
+                      if (toolMode === 'select') {
+                        handleItemDragStart(e, clip.id, 'clip', clip.startTimelineTime, clip.duration);
+                      }
+                    }}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (hasMovedRef.current) return;
                       if (isVideoLocked) return;
 
                       if (toolMode === 'razor') {
@@ -868,9 +1276,11 @@ export const Timeline: React.FC<TimelineProps> = ({
                       width: `${widthPx}px`,
                     }}
                     className={`absolute h-18 rounded-lg overflow-hidden border-2 flex flex-col justify-between transition-shadow group select-none shadow-md ${
+                      toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                    } ${
                       isSelected
-                        ? 'bg-slate-900 border-indigo-400 ring-2 ring-indigo-400/60 shadow-indigo-950/80'
-                        : 'bg-slate-900/90 border-slate-700/80 hover:border-slate-500'
+                        ? 'bg-slate-900 border-indigo-400 ring-2 ring-indigo-400/60 shadow-indigo-950/80 z-20'
+                        : 'bg-slate-900/90 border-slate-700/80 hover:border-slate-500 z-10'
                     }`}
                   >
                     {/* Simulated Filmstrip Perforations (Top & Bottom) */}
@@ -947,6 +1357,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                     {/* Left Trim Handle */}
                     {!isVideoLocked && (
                       <div
+                        data-trim-handle="true"
                         onMouseDown={(e) => handleTrimStart(e, clip.id, 'left')}
                         title="Drag to trim Start (IN)"
                         className="absolute left-0 top-0 bottom-0 w-2.5 bg-indigo-500/30 hover:bg-indigo-500 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-indigo-500/60"
@@ -958,6 +1369,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                     {/* Right Trim Handle */}
                     {!isVideoLocked && (
                       <div
+                        data-trim-handle="true"
                         onMouseDown={(e) => handleTrimStart(e, clip.id, 'right')}
                         title="Drag to trim End (OUT)"
                         className="absolute right-0 top-0 bottom-0 w-2.5 bg-indigo-500/30 hover:bg-indigo-500 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-indigo-500/60"
@@ -1157,8 +1569,54 @@ export const Timeline: React.FC<TimelineProps> = ({
               itemCount={sfxTracks.length}
             />
 
-            {/* Lane Items */}
-            <div className="relative flex-1 h-full flex items-center">
+            {/* Lane Items & Dedicated Drop Zone */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                if (dragOverTrack !== 'a2') setDragOverTrack('a2');
+              }}
+              onDragLeave={() => {
+                setDragOverTrack((prev) => (prev === 'a2' ? null : prev));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverTrack(null);
+                if (isSfxLocked) return;
+
+                const rect = e.currentTarget.getBoundingClientRect();
+                const dropX = e.clientX - rect.left;
+                const dropSec = Math.max(0, dropX / pixelsPerSecond);
+
+                try {
+                  const rawData = e.dataTransfer.getData('application/json');
+                  if (rawData) {
+                    const parsed = JSON.parse(rawData);
+                    if (parsed.type === 'sticker' && parsed.item) {
+                      const item = parsed.item;
+                      const newSfx: SfxTrackItem = {
+                        id: `sfx-${Date.now()}`,
+                        name: item.sfxLabel || `${item.label} Sound`,
+                        preset: item.sfx || 'pop',
+                        startTimelineTime: dropSec,
+                        duration: 0.8,
+                        volume: 1.0,
+                        isMuted: false,
+                      };
+                      setSfxTracks((prev) => [...prev, newSfx]);
+                      if (setSelectedSfxId) setSelectedSfxId(newSfx.id);
+                    }
+                  }
+                } catch (err) {
+                  console.error('Failed to parse dropped SFX:', err);
+                }
+              }}
+              className={`relative flex-1 h-full flex items-center transition-all ${
+                dragOverTrack === 'a2'
+                  ? 'bg-emerald-950/40 ring-2 ring-emerald-400/80 ring-inset'
+                  : ''
+              }`}
+            >
               {sfxTracks.map((sfx) => {
                 const isSelected = selectedSfxId === sfx.id;
                 const leftPx = sfx.startTimelineTime * pixelsPerSecond;
@@ -1172,8 +1630,12 @@ export const Timeline: React.FC<TimelineProps> = ({
                   <div
                     key={sfx.id}
                     data-no-scrub="true"
+                    onPointerDown={(e) =>
+                      handleItemDragStart(e, sfx.id, 'sfx', sfx.startTimelineTime, sfx.duration)
+                    }
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (hasMovedRef.current) return;
                       if (toolMode === 'select' && !isSfxLocked && setSelectedSfxId) {
                         setSelectedSfxId(sfx.id);
                         setSelectedClipId(null);
@@ -1184,20 +1646,34 @@ export const Timeline: React.FC<TimelineProps> = ({
                       left: `${leftPx}px`,
                       width: `${widthPx}px`,
                     }}
-                    className={`absolute h-11 rounded-lg px-2 flex items-center justify-between border-2 transition-all cursor-pointer shadow-md select-none ${
+                    className={`absolute h-11 rounded-lg px-2 flex items-center justify-between border-2 transition-all shadow-md select-none group ${
+                      toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                    } ${
                       isTriggeredNow
-                        ? 'bg-emerald-900/90 border-emerald-300 ring-2 ring-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.8)] scale-[1.02]'
+                        ? 'bg-emerald-900/90 border-emerald-300 ring-2 ring-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.8)] scale-[1.02] z-20'
                         : isSelected
-                        ? 'bg-emerald-950 border-emerald-400 ring-2 ring-emerald-400/50'
-                        : 'bg-emerald-950/70 border-emerald-700/60 hover:border-emerald-500'
+                        ? 'bg-emerald-950 border-emerald-400 ring-2 ring-emerald-400/50 z-20'
+                        : 'bg-emerald-950/70 border-emerald-700/60 hover:border-emerald-500 z-10'
                     }`}
                   >
-                    <div className="flex items-center gap-1.5 overflow-hidden">
+                    {/* Left Trim Handle */}
+                    {!isSfxLocked && (
+                      <div
+                        data-trim-handle="true"
+                        onPointerDown={(e) => handleSfxTrimStart(e, sfx.id, 'left')}
+                        title="Trim SFX start"
+                        className="absolute left-0 top-0 bottom-0 w-2.5 bg-emerald-500/30 hover:bg-emerald-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-emerald-500/60"
+                      >
+                        <div className="w-0.5 h-3 bg-white/80 rounded" />
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-1.5 overflow-hidden pl-1">
                       <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
                       <span className="text-xs font-semibold text-emerald-200 truncate">{sfx.name}</span>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 pr-1">
                       <span className="text-[9px] font-mono text-emerald-400">
                         {Math.round((sfx.volume ?? 1) * 100)}%
                       </span>
@@ -1214,6 +1690,18 @@ export const Timeline: React.FC<TimelineProps> = ({
                         </button>
                       )}
                     </div>
+
+                    {/* Right Trim Handle */}
+                    {!isSfxLocked && (
+                      <div
+                        data-trim-handle="true"
+                        onPointerDown={(e) => handleSfxTrimStart(e, sfx.id, 'right')}
+                        title="Trim SFX duration (end)"
+                        className="absolute right-0 top-0 bottom-0 w-2.5 bg-emerald-500/30 hover:bg-emerald-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-emerald-500/60"
+                      >
+                        <div className="w-0.5 h-3 bg-white/80 rounded" />
+                      </div>
+                    )}
                   </div>
                 );
               })}

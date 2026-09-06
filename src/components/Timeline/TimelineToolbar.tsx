@@ -315,7 +315,7 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
           </button>
 
           <button
-            onClick={() => setPixelsPerSecond((p) => Math.max(15, p - 15))}
+            onClick={() => setPixelsPerSecond((p) => Math.max(10, p - 10))}
             title="Zoom Out (-)"
             className="p-0.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition-colors"
           >
@@ -324,9 +324,9 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
 
           <input
             type="range"
-            min={15}
-            max={350}
-            step={5}
+            min={10}
+            max={200}
+            step={2}
             value={pixelsPerSecond}
             onChange={(e) => setPixelsPerSecond(Number(e.target.value))}
             title={`Timeline Zoom: ${pixelsPerSecond}px/sec (Ctrl+Wheel to zoom)`}
@@ -334,7 +334,7 @@ export const TimelineToolbar: React.FC<TimelineToolbarProps> = ({
           />
 
           <button
-            onClick={() => setPixelsPerSecond((p) => Math.min(350, p + 15))}
+            onClick={() => setPixelsPerSecond((p) => Math.min(200, p + 10))}
             title="Zoom In for Minor Detail (+)"
             className="p-0.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition-colors"
           >

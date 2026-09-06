@@ -94,10 +94,22 @@ export const StickerLibrary: React.FC<StickerLibraryProps> = ({
         {STICKER_CATALOG.map((item) => (
           <div
             key={item.label}
+            draggable={true}
+            onDragStart={(e) => {
+              e.dataTransfer.setData(
+                'application/json',
+                JSON.stringify({
+                  type: 'sticker',
+                  item,
+                })
+              );
+              e.dataTransfer.effectAllowed = 'copy';
+            }}
             onClick={() => handleAddSticker(item)}
-            className="bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 hover:border-pink-500/60 p-2.5 rounded-xl cursor-pointer transition flex flex-col items-center justify-between group shadow-sm hover:shadow-pink-500/10"
+            className="bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 hover:border-pink-500/60 p-2.5 rounded-xl cursor-grab active:cursor-grabbing transition flex flex-col items-center justify-between group shadow-sm hover:shadow-pink-500/10 select-none"
+            title="Click to add at playhead, or drag and drop directly onto Timeline Track 2"
           >
-            <div className="text-3xl mb-1 group-hover:scale-125 transition transform">
+            <div className="text-3xl mb-1 group-hover:scale-125 transition transform pointer-events-none">
               {item.emoji}
             </div>
 

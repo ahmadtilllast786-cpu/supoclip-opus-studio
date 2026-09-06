@@ -88,13 +88,15 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     setHoverTime(null);
   };
 
-  // Determine tick interval based on zoom
+  // Determine tick interval based on zoom scaling (10px/s to 200px/s)
   let majorTickInterval = 1;
-  if (pixelsPerSecond < 40) majorTickInterval = 5;
-  else if (pixelsPerSecond < 70) majorTickInterval = 2;
-  else if (pixelsPerSecond > 160) majorTickInterval = 0.5;
+  if (pixelsPerSecond < 20) majorTickInterval = 10;
+  else if (pixelsPerSecond < 45) majorTickInterval = 5;
+  else if (pixelsPerSecond < 80) majorTickInterval = 2;
+  else if (pixelsPerSecond > 140) majorTickInterval = 0.5;
 
-  const effectiveRulerDuration = projectEndSec > 0 ? projectEndSec : totalDuration;
+  const trailingDeadSpaceSec = 5;
+  const effectiveRulerDuration = projectEndSec > 0 ? projectEndSec + trailingDeadSpaceSec : totalDuration;
   const totalTicks = Math.ceil(effectiveRulerDuration / majorTickInterval) + 1;
   const ticks = Array.from({ length: totalTicks }, (_, i) => i * majorTickInterval).filter(
     (t) => t <= effectiveRulerDuration + 0.01
@@ -124,11 +126,14 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
       <div className="relative h-full flex-1">
         {ticks.map((timeSec) => {
           const leftPx = timeSec * pixelsPerSecond;
+          const isPastEnd = projectEndSec > 0 && timeSec > projectEndSec;
           return (
             <div
               key={timeSec}
               style={{ left: `${leftPx}px` }}
-              className="absolute top-0 bottom-0 flex flex-col justify-between pointer-events-none"
+              className={`absolute top-0 bottom-0 flex flex-col justify-between pointer-events-none ${
+                isPastEnd ? 'opacity-30' : 'opacity-100'
+              }`}
             >
               {/* Major Tick Mark */}
               <div className="w-px h-2.5 bg-slate-500/80" />
@@ -142,6 +147,18 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
           );
         })}
 
+        {/* Start Marker on Ruler */}
+        <div
+          style={{ left: '0px' }}
+          className="absolute top-0 bottom-0 -translate-x-1/2 z-20 flex flex-col items-center pointer-events-none"
+        >
+          <div className="flex items-center gap-0.5 px-1.5 py-0.2 bg-emerald-500 text-slate-950 font-mono font-bold text-[9px] rounded-b shadow-md shadow-emerald-950/60 border-b border-x border-emerald-300">
+            <Flag className="w-2.5 h-2.5 fill-current" />
+            <span>START: 00:00.00</span>
+          </div>
+          <div className="w-0.5 h-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+        </div>
+
         {/* Project End Boundary Badge on Ruler */}
         {projectEndSec > 0 && (
           <div
@@ -154,6 +171,17 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
             </div>
             <div className="w-0.5 h-full bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.8)]" />
           </div>
+        )}
+
+        {/* Darkened Out-of-Bounds Area past Project End */}
+        {projectEndSec > 0 && (
+          <div
+            style={{
+              left: `${projectEndSec * pixelsPerSecond}px`,
+              right: 0,
+            }}
+            className="absolute top-0 bottom-0 bg-[repeating-linear-gradient(45deg,rgba(15,23,42,0.7),rgba(15,23,42,0.7)_6px,rgba(30,41,59,0.4)_6px,rgba(30,41,59,0.4)_12px)] pointer-events-none border-l border-amber-500/50"
+          />
         )}
 
         {/* Hover Time Indicator Bubble */}
