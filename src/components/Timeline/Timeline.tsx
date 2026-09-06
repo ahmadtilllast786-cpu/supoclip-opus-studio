@@ -11,6 +11,9 @@ import {
   Video,
   Smile,
   Volume2,
+  VolumeX,
+  Plus,
+  Minus,
   Sliders,
   MoveHorizontal,
   ChevronLeft,
@@ -19,12 +22,14 @@ import {
   Crosshair,
   Clock,
   ArrowLeftRight,
+  Film,
 } from 'lucide-react';
 import {
   VideoClip,
   StickerOverlay,
   DynamicZoomKeyframe,
   SfxTrackItem,
+  SfxPreset,
   TransitionType,
 } from '../../types/timeline';
 
@@ -43,6 +48,8 @@ interface TimelineProps {
   setSelectedClipId: (id: string | null) => void;
   selectedOverlayId: string | null;
   setSelectedOverlayId: (id: string | null) => void;
+  selectedSfxId?: string | null;
+  setSelectedSfxId?: (id: string | null) => void;
   onAddPunchZoom: () => void;
 }
 
@@ -61,6 +68,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   setSelectedClipId,
   selectedOverlayId,
   setSelectedOverlayId,
+  selectedSfxId,
+  setSelectedSfxId,
   onAddPunchZoom,
 }) => {
   const [pixelsPerSecond, setPixelsPerSecond] = useState(80);
@@ -212,7 +221,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     [clips, setClips]
   );
 
-  // Delete Selected Clip or Overlay
+  // Delete Selected Clip, Overlay, or SFX
   const handleDeleteSelected = useCallback(() => {
     if (selectedClipId) {
       handleDeleteClip(selectedClipId);
@@ -220,8 +229,82 @@ export const Timeline: React.FC<TimelineProps> = ({
       setOverlays((ovs) => ovs.filter((o) => o.id !== selectedOverlayId));
       setSfxTracks((sfxs) => sfxs.filter((s) => s.linkedOverlayId !== selectedOverlayId));
       setSelectedOverlayId(null);
+    } else if (selectedSfxId) {
+      setSfxTracks((sfxs) => sfxs.filter((s) => s.id !== selectedSfxId));
+      if (setSelectedSfxId) setSelectedSfxId(null);
     }
-  }, [selectedClipId, selectedOverlayId, handleDeleteClip, setOverlays, setSfxTracks, setSelectedOverlayId]);
+  }, [selectedClipId, selectedOverlayId, selectedSfxId, handleDeleteClip, setOverlays, setSfxTracks, setSelectedOverlayId, setSelectedSfxId]);
+
+  // Audio Volume & Mute Handlers for Main Clips
+  const handleAdjustClipVolume = useCallback((clipId: string, delta: number) => {
+    setClips((prev) =>
+      prev.map((c) => {
+        if (c.id === clipId) {
+          const curVol = c.volume ?? 1.0;
+          const newVol = Math.max(0, Math.min(2.0, parseFloat((curVol + delta).toFixed(2))));
+          return { ...c, volume: newVol, isMuted: newVol === 0 ? true : false };
+        }
+        return c;
+      })
+    );
+  }, [setClips]);
+
+  const handleToggleClipMute = useCallback((clipId: string) => {
+    setClips((prev) =>
+      prev.map((c) => {
+        if (c.id === clipId) {
+          return { ...c, isMuted: !c.isMuted };
+        }
+        return c;
+      })
+    );
+  }, [setClips]);
+
+  // SFX Volume, Mute, and Management Handlers
+  const handleAdjustSfxVolume = useCallback((sfxId: string, delta: number) => {
+    setSfxTracks((prev) =>
+      prev.map((s) => {
+        if (s.id === sfxId) {
+          const curVol = s.volume ?? 1.0;
+          const newVol = Math.max(0, Math.min(2.0, parseFloat((curVol + delta).toFixed(2))));
+          return { ...s, volume: newVol, isMuted: newVol === 0 ? true : false };
+        }
+        return s;
+      })
+    );
+  }, [setSfxTracks]);
+
+  const handleToggleSfxMute = useCallback((sfxId: string) => {
+    setSfxTracks((prev) =>
+      prev.map((s) => {
+        if (s.id === sfxId) {
+          return { ...s, isMuted: !s.isMuted };
+        }
+        return s;
+      })
+    );
+  }, [setSfxTracks]);
+
+  const handleDeleteSfx = useCallback((sfxId: string) => {
+    setSfxTracks((prev) => prev.filter((s) => s.id !== sfxId));
+    if (selectedSfxId === sfxId && setSelectedSfxId) {
+      setSelectedSfxId(null);
+    }
+  }, [selectedSfxId, setSelectedSfxId, setSfxTracks]);
+
+  const handleAddQuickSfx = useCallback((preset: SfxPreset = 'vine-boom') => {
+    const newSfx: SfxTrackItem = {
+      id: `sfx-manual-${Date.now()}`,
+      name: `SFX: ${preset.toUpperCase()}`,
+      preset: preset,
+      startTimelineTime: currentTime,
+      duration: preset === 'vine-boom' ? 1.2 : 0.6,
+      volume: 1.0,
+      isMuted: false,
+    };
+    setSfxTracks((prev) => [...prev, newSfx]);
+    if (setSelectedSfxId) setSelectedSfxId(newSfx.id);
+  }, [currentTime, setSfxTracks, setSelectedSfxId]);
 
   // Fit Timeline to Screen
   const handleFitToScreen = useCallback(() => {
@@ -391,7 +474,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   return (
     <div
       onWheel={handleTimelineWheel}
-      className="h-68 bg-[#0d111a] border-t border-slate-800 flex flex-col shrink-0 select-none overflow-hidden"
+      className="h-80 bg-[#0d111a] border-t border-slate-800 flex flex-col shrink-0 select-none overflow-hidden"
     >
       {/* Timeline Controls Toolbar */}
       <div className="h-10 bg-[#121722] border-b border-slate-800 px-3 flex items-center justify-between shrink-0">
@@ -422,16 +505,16 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* Delete Selection */}
           <button
             onClick={handleDeleteSelected}
-            disabled={!selectedClipId && !selectedOverlayId}
+            disabled={!selectedClipId && !selectedOverlayId && !selectedSfxId}
             className={`flex items-center space-x-1 text-xs px-2.5 py-1 rounded transition font-medium ${
-              selectedClipId || selectedOverlayId
+              selectedClipId || selectedOverlayId || selectedSfxId
                 ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 ring-1 ring-rose-400'
                 : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50'
             }`}
-            title="Delete Selected Clip or Overlay (Del/Backspace)"
+            title="Delete Selected Clip, Overlay, or SFX (Del/Backspace)"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span>{selectedClipId ? 'Delete Clip' : selectedOverlayId ? 'Delete Sticker' : 'Delete'}</span>
+            <span>{selectedClipId ? 'Delete Clip' : selectedOverlayId ? 'Delete Sticker' : selectedSfxId ? 'Delete SFX' : 'Delete'}</span>
           </button>
 
           {/* Magnetic Snapping Toggle */}
@@ -478,6 +561,16 @@ export const Timeline: React.FC<TimelineProps> = ({
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
             <span>Punch Zoom</span>
+          </button>
+
+          {/* Add Quick SFX */}
+          <button
+            onClick={() => handleAddQuickSfx('vine-boom')}
+            className="flex items-center space-x-1 bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 text-emerald-300 text-xs px-2 py-1 rounded transition"
+            title="Add special sound effect at playhead"
+          >
+            <Music className="w-3.5 h-3.5 text-emerald-400" />
+            <span>+ SFX</span>
           </button>
         </div>
 
@@ -781,16 +874,19 @@ export const Timeline: React.FC<TimelineProps> = ({
                       </div>
                     </div>
 
-                    {/* Waveform graphic visualization */}
-                    <div className="h-5 flex items-end space-x-0.5 opacity-70 px-1">
-                      {clip.waveform &&
-                        clip.waveform.slice(0, Math.floor(width / 4)).map((peak, pIdx) => (
-                          <div
-                            key={pIdx}
-                            style={{ height: `${Math.max(15, peak * 100)}%` }}
-                            className="w-1 bg-indigo-200/90 rounded-t-sm"
-                          />
+                    {/* Visual Media Film Strip Striping */}
+                    <div className="h-5 flex items-center justify-between px-1.5 bg-black/25 rounded border border-indigo-500/20 overflow-hidden">
+                      <div className="flex items-center space-x-1.5">
+                        <Film className="w-3.5 h-3.5 text-indigo-300/70 shrink-0" />
+                        <span className="text-[10px] font-mono text-indigo-200/80 font-medium truncate">
+                          Video Footage ({clip.speed !== 1.0 ? `${clip.speed}x` : 'Visual'})
+                        </span>
+                      </div>
+                      <div className="flex items-center space-x-0.5 opacity-40 shrink-0">
+                        {Array.from({ length: Math.min(8, Math.floor(width / 24)) }).map((_, spIdx) => (
+                          <div key={spIdx} className="w-1 h-3 bg-indigo-200/40 rounded-xs" />
                         ))}
+                      </div>
                     </div>
 
                     {/* Footer: Zoom scale badge or Selection Status */}
@@ -814,26 +910,261 @@ export const Timeline: React.FC<TimelineProps> = ({
             })}
           </div>
 
-          {/* TRACK 3: Audio & Synchronized SFX Track */}
-          <div className="h-12 border-b border-slate-800/60 relative flex items-center bg-[#0d121c]/40">
-            <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
-              <Music className="w-3 h-3" />
-              <span>Audio / SFX</span>
+          {/* TRACK 3: Extracted Main Audio Track */}
+          <div className="h-16 border-b border-slate-800/60 relative flex items-center bg-[#080d16]/70">
+            <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-sky-400 uppercase tracking-wider">
+              <Volume2 className="w-3 h-3 text-sky-400" />
+              <span>Main Audio</span>
+            </div>
+
+            {clips.map((clip) => {
+              const left = clip.startTimelineTime * pixelsPerSecond;
+              const width = Math.max(60, clip.duration * pixelsPerSecond);
+              const isClipSelected = selectedClipId === clip.id;
+              const isMuted = clip.isMuted ?? false;
+              const volumePercent = Math.round((clip.volume ?? 1.0) * 100);
+
+              return (
+                <div
+                  key={`audio-${clip.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedClipId(clip.id);
+                    setSelectedOverlayId(null);
+                    if (setSelectedSfxId) setSelectedSfxId(null);
+                  }}
+                  style={{ left: `${left}px`, width: `${width}px` }}
+                  className={`group absolute h-13 rounded-lg border flex flex-col justify-between p-1 cursor-pointer transition-all duration-150 ${
+                    isClipSelected
+                      ? 'bg-sky-600/30 border-sky-400 text-white ring-2 ring-sky-400/80 shadow-lg shadow-sky-500/30 z-10'
+                      : 'bg-sky-950/70 border-sky-800/60 hover:border-sky-600 hover:bg-sky-900/60 text-sky-200'
+                  } ${isMuted ? 'opacity-50 grayscale' : ''}`}
+                  title={`Extracted Sound: ${clip.name} (Volume: ${volumePercent}%)`}
+                >
+                  {/* Audio Card Header: Name + Inline Volume Controls */}
+                  <div className="flex items-center justify-between text-[10px] font-semibold truncate space-x-1">
+                    <div className="flex items-center space-x-1 truncate">
+                      <Volume2 className={`w-3 h-3 shrink-0 ${isMuted ? 'text-rose-400' : 'text-sky-400'}`} />
+                      <span className="truncate text-[10px]">{clip.name}</span>
+                    </div>
+
+                    {/* Inline Volume Controls: Mute, [-], %, [+] */}
+                    <div className="flex items-center space-x-0.5 bg-black/60 rounded px-1 py-0.5 shrink-0">
+                      {/* Mute Toggle */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleClipMute(clip.id);
+                        }}
+                        className={`p-0.5 rounded hover:bg-white/20 transition ${
+                          isMuted ? 'text-rose-400' : 'text-sky-300'
+                        }`}
+                        title={isMuted ? 'Unmute Dialogue' : 'Mute Dialogue'}
+                      >
+                        {isMuted ? <VolumeX className="w-2.5 h-2.5" /> : <Volume2 className="w-2.5 h-2.5" />}
+                      </button>
+
+                      {/* Vol Down */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAdjustClipVolume(clip.id, -0.1);
+                        }}
+                        className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/25 flex items-center justify-center text-white"
+                        title="Decrease Volume (-10%)"
+                      >
+                        <Minus className="w-2 h-2" />
+                      </button>
+
+                      {/* Vol % Display */}
+                      <span
+                        className={`font-mono text-[9px] px-1 font-bold ${
+                          isMuted
+                            ? 'text-rose-400'
+                            : (clip.volume ?? 1.0) > 1.0
+                            ? 'text-amber-400'
+                            : 'text-sky-300'
+                        }`}
+                      >
+                        {isMuted ? '0%' : `${volumePercent}%`}
+                      </span>
+
+                      {/* Vol Up */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAdjustClipVolume(clip.id, 0.1);
+                        }}
+                        className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/25 flex items-center justify-center text-white"
+                        title="Increase Volume (+10%, up to 200%)"
+                      >
+                        <Plus className="w-2 h-2" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Full High-Resolution Waveform Visualization */}
+                  <div className="h-5 flex items-end space-x-0.5 px-0.5">
+                    {clip.waveform && clip.waveform.length > 0 ? (
+                      clip.waveform.slice(0, Math.floor(width / 3.5)).map((peak, pIdx) => (
+                        <div
+                          key={pIdx}
+                          style={{
+                            height: `${Math.max(
+                              12,
+                              Math.min(100, peak * (isMuted ? 15 : (clip.volume ?? 1.0) * 100))
+                            )}%`,
+                          }}
+                          className={`w-1 rounded-t-xs transition-all ${
+                            isMuted
+                              ? 'bg-slate-500/40'
+                              : (clip.volume ?? 1.0) > 1.2
+                              ? 'bg-amber-400/90'
+                              : 'bg-sky-400/90'
+                          }`}
+                        />
+                      ))
+                    ) : (
+                      <div className="text-[8px] text-sky-400/60 font-mono italic">Dialogue audio waveform</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* TRACK 4: Dedicated SFX Audio Track */}
+          <div className="h-14 border-b border-slate-800/60 relative flex items-center bg-[#09111b]/50">
+            <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center justify-between text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
+              <div className="flex items-center space-x-1">
+                <Music className="w-3 h-3 text-emerald-400" />
+                <span>SFX</span>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAddQuickSfx('vine-boom');
+                }}
+                className="p-0.5 bg-emerald-700/60 hover:bg-emerald-600 text-white rounded text-[8px] flex items-center"
+                title="Add SFX sound at playhead"
+              >
+                <Plus className="w-2.5 h-2.5" />
+              </button>
             </div>
 
             {sfxTracks.map((sfx) => {
               const left = sfx.startTimelineTime * pixelsPerSecond;
-              const width = Math.max(35, sfx.duration * pixelsPerSecond);
+              const width = Math.max(85, sfx.duration * pixelsPerSecond);
+              const isActiveSfx = currentTime >= sfx.startTimelineTime && currentTime <= sfx.startTimelineTime + sfx.duration;
+              const isSfxSelected = selectedSfxId === sfx.id;
+              const isMuted = sfx.isMuted ?? false;
+              const volumePercent = Math.round((sfx.volume ?? 1.0) * 100);
 
               return (
                 <div
                   key={sfx.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (setSelectedSfxId) setSelectedSfxId(sfx.id);
+                    setSelectedClipId(null);
+                    setSelectedOverlayId(null);
+                  }}
                   style={{ left: `${left}px`, width: `${width}px` }}
-                  className="absolute h-8 rounded bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 flex items-center px-1.5 text-[10px] font-mono shadow-sm"
-                  title={`Trigger SFX: ${sfx.preset}`}
+                  className={`absolute h-10 rounded-lg border flex items-center justify-between px-1.5 cursor-pointer transition-all duration-150 ${
+                    isActiveSfx
+                      ? 'bg-emerald-600 border-white text-white ring-2 ring-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.9)] scale-[1.03] z-20'
+                      : isSfxSelected
+                      ? 'bg-emerald-800/90 border-white text-white ring-2 ring-emerald-500 shadow-md z-10'
+                      : 'bg-emerald-950/80 border-emerald-700/60 hover:bg-emerald-900/90 text-emerald-200'
+                  } ${isMuted ? 'opacity-50 grayscale' : ''}`}
+                  title={`SFX: ${sfx.name} (${sfx.preset}) - Volume: ${volumePercent}%`}
                 >
-                  <Volume2 className="w-3 h-3 mr-1 text-emerald-400" />
-                  <span className="truncate">{sfx.name}</span>
+                  {/* SFX Label & Animated Sonic Visualizer when Active */}
+                  <div className="flex items-center space-x-1.5 truncate mr-1">
+                    {isActiveSfx ? (
+                      /* Animated Bouncing Audio EQ Bars when Special Sound Triggers */
+                      <div className="flex items-end space-x-0.5 h-3.5 shrink-0">
+                        <span className="w-0.5 h-2.5 bg-emerald-200 rounded animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-0.5 h-3.5 bg-white rounded animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-0.5 h-2 bg-emerald-200 rounded animate-bounce" style={{ animationDelay: '300ms' }} />
+                        <span className="w-0.5 h-3 bg-white rounded animate-bounce" style={{ animationDelay: '100ms' }} />
+                      </div>
+                    ) : (
+                      <Volume2 className={`w-3 h-3 shrink-0 ${isMuted ? 'text-rose-400' : 'text-emerald-400'}`} />
+                    )}
+                    <span className="truncate text-[10px] font-semibold">{sfx.name}</span>
+                    {isActiveSfx && (
+                      <span className="bg-emerald-300 text-slate-950 px-1 py-0.2 rounded font-mono font-black text-[8px] animate-pulse">
+                        SFX
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Inline Volume Controls: Mute, [-], %, [+], Delete */}
+                  <div className="flex items-center space-x-0.5 bg-black/60 rounded px-1 py-0.5 shrink-0">
+                    {/* Mute Toggle */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleSfxMute(sfx.id);
+                      }}
+                      className={`p-0.5 rounded hover:bg-white/20 transition ${
+                        isMuted ? 'text-rose-400' : 'text-emerald-300'
+                      }`}
+                      title={isMuted ? 'Unmute SFX' : 'Mute SFX'}
+                    >
+                      {isMuted ? <VolumeX className="w-2.5 h-2.5" /> : <Volume2 className="w-2.5 h-2.5" />}
+                    </button>
+
+                    {/* Vol Down */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAdjustSfxVolume(sfx.id, -0.1);
+                      }}
+                      className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/25 flex items-center justify-center text-white"
+                      title="Decrease Volume (-10%)"
+                    >
+                      <Minus className="w-2 h-2" />
+                    </button>
+
+                    {/* Vol % */}
+                    <span
+                      className={`font-mono text-[9px] px-1 font-bold ${
+                        isMuted
+                          ? 'text-rose-400'
+                          : (sfx.volume ?? 1.0) > 1.0
+                          ? 'text-amber-400'
+                          : 'text-emerald-300'
+                      }`}
+                    >
+                      {isMuted ? '0%' : `${volumePercent}%`}
+                    </span>
+
+                    {/* Vol Up */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAdjustSfxVolume(sfx.id, 0.1);
+                      }}
+                      className="w-3.5 h-3.5 rounded bg-white/10 hover:bg-white/25 flex items-center justify-center text-white"
+                      title="Increase Volume (+10%, up to 200%)"
+                    >
+                      <Plus className="w-2 h-2" />
+                    </button>
+
+                    {/* Delete SFX */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteSfx(sfx.id);
+                      }}
+                      className="p-0.5 rounded bg-rose-600/80 hover:bg-rose-600 text-white transition ml-0.5"
+                      title="Delete SFX item"
+                    >
+                      <Trash2 className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })}

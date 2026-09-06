@@ -178,8 +178,8 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
           } else {
             // Keep active clip playing smoothly in hardware sync without seek loops
             if (activeVideo) {
-              activeVideo.muted = muted;
-              activeVideo.volume = activeClip.volume;
+              activeVideo.muted = muted || !!activeClip.isMuted;
+              activeVideo.volume = Math.min(1.0, Math.max(0, activeClip.isMuted ? 0 : activeClip.volume));
 
               const targetVideoTime =
                 activeClip.inPoint + (time - activeClip.startTimelineTime) * activeClip.speed;
@@ -208,8 +208,8 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
 
             // Pre-roll incoming clip smoothly during transition window
             if (nextClip && nextVideo && timeLeftInClip <= transitionDuration + 0.1) {
-              nextVideo.muted = muted;
-              nextVideo.volume = nextClip.volume;
+              nextVideo.muted = muted || !!nextClip.isMuted;
+              nextVideo.volume = Math.min(1.0, Math.max(0, nextClip.isMuted ? 0 : nextClip.volume));
               if (nextVideo.paused && !nextVideo.seeking) {
                 nextVideo.currentTime = nextClip.inPoint;
                 nextVideo.play().catch(() => {});
@@ -242,7 +242,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
           if (time >= sfx.startTimelineTime && time < sfx.startTimelineTime + 0.15) {
             if (!lastTriggeredSfxRef.current.has(sfx.id)) {
               lastTriggeredSfxRef.current.add(sfx.id);
-              if (!isMutedRef.current) {
+              if (!isMutedRef.current && !sfx.isMuted) {
                 playSfxInstant(sfx.preset, sfx.volume);
               }
             }
@@ -276,6 +276,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
             words,
             captionTemplate,
             hookTitle,
+            sfxTracks,
           });
         }
       }

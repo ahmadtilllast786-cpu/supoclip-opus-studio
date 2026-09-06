@@ -65,7 +65,8 @@ export interface VideoClip {
   duration: number;      // (outPoint - inPoint) / speed
   startTimelineTime: number; // Start position on sequential timeline (seconds)
   speed: number;         // 1.0 = normal
-  volume: number;        // 0 to 1
+  volume: number;        // 0 to 2.0 (0% to 200%)
+  isMuted?: boolean;
   zoomScale: number;     // 1.0 (default) to 1.5 (punch zoom)
   zoomCenter: { x: number; y: number }; // Relative 0-1, default 0.5, 0.5
   transitionIn: TransitionType;
@@ -96,7 +97,8 @@ export interface SfxTrackItem {
   preset: SfxPreset;
   startTimelineTime: number;
   duration: number;
-  volume: number;
+  volume: number;        // 0 to 2.0 (0% to 200%)
+  isMuted?: boolean;
   linkedOverlayId?: string;
   audioBuffer?: AudioBuffer;
 }

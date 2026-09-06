@@ -4,6 +4,7 @@ import {
   DynamicZoomKeyframe,
   TranscriptWord,
   CaptionTemplate,
+  SfxTrackItem,
 } from '../../types/timeline';
 import { calculatePunchZoom } from './punchZoomEngine';
 import { renderTransition } from './transitions';
@@ -21,6 +22,7 @@ export interface RenderFrameOptions {
   captionTemplate?: CaptionTemplate;
   hookTitle?: string | null;
   autoFramingEnabled?: boolean;
+  sfxTracks?: SfxTrackItem[];
 }
 
 /**
@@ -43,6 +45,7 @@ export function renderCompositedFrame(
     captionTemplate,
     hookTitle,
     autoFramingEnabled = true,
+    sfxTracks,
   } = options;
 
   // Clear canvas background with dark studio backdrop
@@ -167,6 +170,16 @@ export function renderCompositedFrame(
       width,
       height,
     });
+  }
+
+  // 4. Render Special Sound Wave Sonic Ripple Effect on Canvas
+  if (sfxTracks && sfxTracks.length > 0) {
+    const activeSfx = sfxTracks.filter(
+      (sfx) => currentTime >= sfx.startTimelineTime && currentTime < sfx.startTimelineTime + sfx.duration
+    );
+    for (const sfx of activeSfx) {
+      drawSpecialSoundEffect(ctx, sfx, currentTime, width, height, overlays);
+    }
   }
 }
 
@@ -382,4 +395,69 @@ function drawEmptyScreen(ctx: CanvasRenderingContext2D, width: number, height: n
   ctx.font = '500 16px Inter, sans-serif';
   ctx.fillStyle = '#64748b';
   ctx.fillText('Drop Video or Load Viral Moments', width / 2, height / 2 + 25);
+}
+
+/**
+ * Draws an energetic audio-reactive soundwave ripple ring and sonic pulse on canvas
+ * when special sound/SFX timestamp plays.
+ */
+function drawSpecialSoundEffect(
+  ctx: CanvasRenderingContext2D,
+  sfx: SfxTrackItem,
+  currentTime: number,
+  width: number,
+  height: number,
+  overlays: StickerOverlay[]
+) {
+  const elapsed = currentTime - sfx.startTimelineTime;
+  const progress = Math.max(0, Math.min(1, elapsed / sfx.duration));
+
+  // Determine center origin from linked overlay or center of screen
+  let originX = width / 2;
+  let originY = height * 0.45;
+
+  if (sfx.linkedOverlayId) {
+    const linked = overlays.find((o) => o.id === sfx.linkedOverlayId);
+    if (linked) {
+      originX = (linked.x / 100) * width;
+      originY = (linked.y / 100) * height;
+    }
+  }
+
+  ctx.save();
+
+  // Multi-ring sonic wave pulse
+  const maxRadius = Math.min(width, height) * 0.32;
+  const waveCycle = (elapsed * 3.5) % 1.0;
+  const radius = 25 + waveCycle * maxRadius;
+  const waveAlpha = Math.max(0, (1 - waveCycle) * (1 - progress * 0.5));
+
+  ctx.beginPath();
+  ctx.arc(originX, originY, radius, 0, Math.PI * 2);
+  ctx.strokeStyle =
+    sfx.preset === 'vine-boom'
+      ? `rgba(239, 68, 68, ${waveAlpha * 0.9})`
+      : sfx.preset === 'laser'
+      ? `rgba(56, 189, 248, ${waveAlpha * 0.9})`
+      : sfx.preset === 'cash'
+      ? `rgba(34, 197, 94, ${waveAlpha * 0.9})`
+      : `rgba(244, 63, 94, ${waveAlpha * 0.9})`;
+  ctx.lineWidth = Math.max(2, 6 * (1 - waveCycle));
+  ctx.shadowColor = ctx.strokeStyle;
+  ctx.shadowBlur = 12;
+  ctx.stroke();
+
+  // Secondary harmonic echo ring
+  if (waveCycle > 0.25) {
+    const echoRadius = (waveCycle - 0.25) * maxRadius;
+    const echoAlpha = waveAlpha * 0.5;
+    ctx.beginPath();
+    ctx.arc(originX, originY, echoRadius, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${echoAlpha})`;
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }

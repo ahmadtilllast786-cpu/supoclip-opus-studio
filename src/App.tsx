@@ -58,6 +58,7 @@ export function App() {
 
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
+  const [selectedSfxId, setSelectedSfxId] = useState<string | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isAutoEditing, setIsAutoEditing] = useState(false);
   const [isLoadingDemo, setIsLoadingDemo] = useState(false);
@@ -286,9 +287,10 @@ export function App() {
     setCurrentTime(0);
   }, []);
 
-  // Selected Clip and Overlay objects
+  // Selected Clip, Overlay, and SFX objects
   const selectedClip = clips.find((c) => c.id === selectedClipId) || null;
   const selectedOverlay = overlays.find((o) => o.id === selectedOverlayId) || null;
+  const selectedSfx = sfxTracks.find((s) => s.id === selectedSfxId) || null;
 
   // Active virality score
   const activeViralityScore =
@@ -526,6 +528,11 @@ export function App() {
             setSfxTracks((prev) => prev.filter((s) => s.linkedOverlayId !== id));
             setSelectedOverlayId(null);
           }}
+          selectedSfx={selectedSfx}
+          onDeleteSfx={(id) => {
+            setSfxTracks((prev) => prev.filter((s) => s.id !== id));
+            setSelectedSfxId(null);
+          }}
           sfxTracks={sfxTracks}
           onUpdateSfx={(updated) =>
             setSfxTracks((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
@@ -549,9 +556,29 @@ export function App() {
         sfxTracks={sfxTracks}
         setSfxTracks={setSfxTracks}
         selectedClipId={selectedClipId}
-        setSelectedClipId={setSelectedClipId}
+        setSelectedClipId={(id) => {
+          setSelectedClipId(id);
+          if (id) {
+            setSelectedOverlayId(null);
+            setSelectedSfxId(null);
+          }
+        }}
         selectedOverlayId={selectedOverlayId}
-        setSelectedOverlayId={setSelectedOverlayId}
+        setSelectedOverlayId={(id) => {
+          setSelectedOverlayId(id);
+          if (id) {
+            setSelectedClipId(null);
+            setSelectedSfxId(null);
+          }
+        }}
+        selectedSfxId={selectedSfxId}
+        setSelectedSfxId={(id) => {
+          setSelectedSfxId(id);
+          if (id) {
+            setSelectedClipId(null);
+            setSelectedOverlayId(null);
+          }
+        }}
         onAddPunchZoom={handleAddPunchZoom}
       />
 
