@@ -13,6 +13,8 @@ import {
   Volume2,
   Sliders,
   MoveHorizontal,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   VideoClip,
@@ -115,11 +117,10 @@ export const Timeline: React.FC<TimelineProps> = ({
     setSelectedClipId(secondHalf.id);
   }, [clips, currentTime, setClips, setSelectedClipId]);
 
-  // Delete Selected Clip or Overlay
-  const handleDeleteSelected = useCallback(() => {
-    if (selectedClipId) {
-      const updated = clips.filter((c) => c.id !== selectedClipId);
-      // Recompute sequential start times
+  // Delete Clip by ID
+  const handleDeleteClip = useCallback(
+    (clipId: string) => {
+      const updated = clips.filter((c) => c.id !== clipId);
       let curTime = 0;
       const resequenced = updated.map((c) => {
         const item = { ...c, startTimelineTime: curTime };
@@ -127,13 +128,45 @@ export const Timeline: React.FC<TimelineProps> = ({
         return item;
       });
       setClips(resequenced);
-      setSelectedClipId(null);
+      if (selectedClipId === clipId) setSelectedClipId(null);
+    },
+    [clips, selectedClipId, setClips, setSelectedClipId]
+  );
+
+  // Re-order Clip Left or Right
+  const handleMoveClip = useCallback(
+    (clipId: string, direction: 'left' | 'right') => {
+      const idx = clips.findIndex((c) => c.id === clipId);
+      if (idx === -1) return;
+      if (direction === 'left' && idx === 0) return;
+      if (direction === 'right' && idx === clips.length - 1) return;
+
+      const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
+      const updated = [...clips];
+      const [moved] = updated.splice(idx, 1);
+      updated.splice(targetIdx, 0, moved);
+
+      let curTime = 0;
+      const resequenced = updated.map((c) => {
+        const item = { ...c, startTimelineTime: curTime };
+        curTime += c.duration;
+        return item;
+      });
+      setClips(resequenced);
+    },
+    [clips, setClips]
+  );
+
+  // Delete Selected Clip or Overlay
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedClipId) {
+      handleDeleteClip(selectedClipId);
     } else if (selectedOverlayId) {
       setOverlays((ovs) => ovs.filter((o) => o.id !== selectedOverlayId));
       setSfxTracks((sfxs) => sfxs.filter((s) => s.linkedOverlayId !== selectedOverlayId));
       setSelectedOverlayId(null);
     }
-  }, [selectedClipId, selectedOverlayId, clips, setClips, setOverlays, setSfxTracks, setSelectedClipId, setSelectedOverlayId]);
+  }, [selectedClipId, selectedOverlayId, handleDeleteClip, setOverlays, setSfxTracks, setSelectedOverlayId]);
 
   // Keyboard shortcut for split (Ctrl+B or S) and delete (Del/Backspace)
   useEffect(() => {
@@ -217,12 +250,38 @@ export const Timeline: React.FC<TimelineProps> = ({
           <button
             onClick={handleDeleteSelected}
             disabled={!selectedClipId && !selectedOverlayId}
-            className="flex items-center space-x-1.5 bg-slate-800 hover:bg-rose-600/80 hover:text-white disabled:opacity-40 disabled:hover:bg-slate-800 text-slate-300 text-xs px-2.5 py-1 rounded transition"
-            title="Delete Selected (Delete or Backspace)"
+            className={`flex items-center space-x-1.5 text-xs px-2.5 py-1 rounded transition font-medium ${
+              selectedClipId || selectedOverlayId
+                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/30 ring-1 ring-rose-400'
+                : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-50'
+            }`}
+            title="Delete Selected Clip or Overlay (Delete or Backspace)"
           >
-            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span>Delete</span>
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>{selectedClipId ? 'Delete Clip' : selectedOverlayId ? 'Delete Sticker' : 'Delete'}</span>
           </button>
+
+          {/* Re-order Clip Buttons if Clip Selected */}
+          {selectedClipId && (
+            <div className="flex items-center space-x-1 border-l border-slate-700/80 pl-2">
+              <button
+                onClick={() => handleMoveClip(selectedClipId, 'left')}
+                className="flex items-center space-x-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white text-xs px-2 py-1 rounded transition"
+                title="Move Selected Clip Earlier in Sequence"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Move Left</span>
+              </button>
+              <button
+                onClick={() => handleMoveClip(selectedClipId, 'right')}
+                className="flex items-center space-x-1 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white text-xs px-2 py-1 rounded transition"
+                title="Move Selected Clip Later in Sequence"
+              >
+                <span>Move Right</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* Add Punch Zoom Keyframe */}
           <button
@@ -263,13 +322,16 @@ export const Timeline: React.FC<TimelineProps> = ({
         className="flex-1 overflow-x-auto overflow-y-auto relative bg-[#090c12]"
       >
         <div
-          ref={rulerRef}
-          onMouseDown={handleRulerMouseDown}
           style={{ width: `${timelineWidth}px` }}
-          className="relative min-h-full cursor-pointer pb-4"
+          className="relative min-h-full pb-4"
         >
-          {/* Time Ruler */}
-          <div className="h-6 bg-[#0f141f] border-b border-slate-800/80 sticky top-0 z-20 flex items-center">
+          {/* Time Ruler - Mousedown restricted strictly to ruler */}
+          <div
+            ref={rulerRef}
+            onMouseDown={handleRulerMouseDown}
+            className="h-7 bg-[#0f141f] hover:bg-[#141b2a] border-b border-slate-800/80 sticky top-0 z-20 flex items-center cursor-pointer transition select-none"
+            title="Click or drag on ruler to scrub playhead"
+          >
             {Array.from({ length: Math.ceil(totalDuration) + 2 }).map((_, sec) => (
               <div
                 key={sec}
@@ -333,7 +395,13 @@ export const Timeline: React.FC<TimelineProps> = ({
           </div>
 
           {/* TRACK 2: Primary Video Track */}
-          <div className="h-20 border-b border-slate-800/60 relative flex items-center bg-[#090e18]/80">
+          <div
+            onClick={() => {
+              setSelectedClipId(null);
+              setSelectedOverlayId(null);
+            }}
+            className="h-20 border-b border-slate-800/60 relative flex items-center bg-[#090e18]/80 cursor-default"
+          >
             <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
               <Video className="w-3 h-3" />
               <span>Video</span>
@@ -341,7 +409,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
             {clips.map((clip, idx) => {
               const left = clip.startTimelineTime * pixelsPerSecond;
-              const width = Math.max(50, clip.duration * pixelsPerSecond);
+              const width = Math.max(60, clip.duration * pixelsPerSecond);
               const isSelected = selectedClipId === clip.id;
 
               return (
@@ -377,36 +445,95 @@ export const Timeline: React.FC<TimelineProps> = ({
                       setSelectedClipId(clip.id);
                       setSelectedOverlayId(null);
                     }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      setSelectedClipId(clip.id);
+                      setSelectedOverlayId(null);
+                    }}
                     style={{ left: `${left}px`, width: `${width}px` }}
-                    className={`absolute h-16 rounded-lg border flex flex-col justify-between p-1.5 cursor-pointer overflow-hidden transition ${
+                    className={`group absolute h-16 rounded-lg border flex flex-col justify-between p-1.5 cursor-pointer overflow-hidden transition-all duration-150 ${
                       isSelected
-                        ? 'bg-indigo-600/90 border-white text-white shadow-xl shadow-indigo-600/30'
-                        : 'bg-indigo-950/70 border-indigo-700/60 hover:bg-indigo-900/80 text-indigo-100'
+                        ? 'bg-indigo-600 border-white text-white ring-2 ring-rose-500 shadow-2xl shadow-indigo-600/50 z-10'
+                        : 'bg-indigo-950/80 border-indigo-700/60 hover:border-indigo-400 hover:bg-indigo-900/90 text-indigo-100'
                     }`}
+                    title={`Clip: ${clip.name} (Click to select, Delete or Split)`}
                   >
-                    <div className="flex items-center justify-between text-[11px] font-semibold truncate">
+                    <div className="flex items-center justify-between text-[11px] font-semibold truncate space-x-1">
                       <span className="truncate">{clip.name}</span>
-                      <span className="text-[10px] font-mono opacity-80">{clip.duration.toFixed(1)}s</span>
+                      <div className="flex items-center space-x-1 shrink-0">
+                        <span className="text-[10px] font-mono opacity-80">{clip.duration.toFixed(1)}s</span>
+
+                        {/* Reorder Buttons when selected */}
+                        {isSelected && (
+                          <div className="flex items-center bg-black/50 rounded px-0.5 space-x-0.5">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMoveClip(clip.id, 'left');
+                              }}
+                              disabled={idx === 0}
+                              className="p-0.5 hover:bg-white/20 disabled:opacity-20 rounded text-white"
+                              title="Move Left (Reorder earlier)"
+                            >
+                              <ChevronLeft className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleMoveClip(clip.id, 'right');
+                              }}
+                              disabled={idx === clips.length - 1}
+                              className="p-0.5 hover:bg-white/20 disabled:opacity-20 rounded text-white"
+                              title="Move Right (Reorder later)"
+                            >
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Direct 1-Click Delete Button on Clip Card */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteClip(clip.id);
+                          }}
+                          className={`p-1 rounded bg-rose-600/95 hover:bg-rose-500 text-white shadow-sm transition ${
+                            isSelected ? 'opacity-100 ring-1 ring-white' : 'opacity-0 group-hover:opacity-100'
+                          }`}
+                          title="Delete this clip (or press Delete key)"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Waveform graphic visualization */}
-                    <div className="h-5 flex items-end space-x-0.5 opacity-60">
+                    <div className="h-5 flex items-end space-x-0.5 opacity-70">
                       {clip.waveform &&
                         clip.waveform.slice(0, Math.floor(width / 4)).map((peak, pIdx) => (
                           <div
                             key={pIdx}
                             style={{ height: `${Math.max(15, peak * 100)}%` }}
-                            className="w-1 bg-indigo-300/80 rounded-t-sm"
+                            className="w-1 bg-indigo-200/90 rounded-t-sm"
                           />
                         ))}
                     </div>
 
-                    {/* Zoom badge if punch zoom is on clip */}
-                    {clip.zoomScale > 1.0 && (
-                      <div className="text-[9px] bg-amber-500/30 text-amber-300 font-mono px-1 rounded self-start">
-                        {clip.zoomScale.toFixed(2)}x Zoom
-                      </div>
-                    )}
+                    {/* Footer status: Zoom scale badge or Selection Status */}
+                    <div className="flex items-center justify-between text-[9px] font-mono">
+                      {clip.zoomScale > 1.0 ? (
+                        <span className="bg-amber-500/30 text-amber-300 px-1 rounded">
+                          {clip.zoomScale.toFixed(2)}x Zoom
+                        </span>
+                      ) : (
+                        <span className="opacity-50">#{idx + 1}</span>
+                      )}
+                      {isSelected && (
+                        <span className="bg-rose-500 text-white font-bold px-1 rounded shadow-sm text-[8px] uppercase">
+                          SELECTED
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </React.Fragment>
               );

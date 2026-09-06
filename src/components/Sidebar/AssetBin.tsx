@@ -16,57 +16,86 @@ export const AssetBin: React.FC<AssetBinProps> = ({
   setIsLoadingDemo,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDraggingOver, setIsDraggingOver] = React.useState(false);
+  const [isProcessing, setIsProcessing] = React.useState(false);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
+  const processFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
+    setIsProcessing(true);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const sourceUrl = URL.createObjectURL(file);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const sourceUrl = URL.createObjectURL(file);
 
-      // Probe duration and audio
-      const video = document.createElement('video');
-      video.src = sourceUrl;
-      video.preload = 'metadata';
+        // Probe duration and audio
+        const video = document.createElement('video');
+        video.src = sourceUrl;
+        video.preload = 'metadata';
 
-      await new Promise((resolve) => {
-        video.onloadedmetadata = resolve;
-        video.onerror = resolve;
-      });
+        await new Promise((resolve) => {
+          video.onloadedmetadata = resolve;
+          video.onerror = resolve;
+          setTimeout(resolve, 2000);
+        });
 
-      const duration = video.duration || 5;
+        const duration = video.duration && !isNaN(video.duration) ? video.duration : 5;
 
-      // Extract waveform
-      let waveform: number[] = [];
-      try {
-        const audioBuffer = await decodeAudioBuffer(file);
-        waveform = generateWaveformPeaks(audioBuffer, 60);
-      } catch {
-        // Fallback waveform if no audio track
-        waveform = Array.from({ length: 40 }, () => 0.2 + Math.random() * 0.6);
+        // Extract waveform
+        let waveform: number[] = [];
+        try {
+          const audioBuffer = await decodeAudioBuffer(file);
+          waveform = generateWaveformPeaks(audioBuffer, 60);
+        } catch {
+          // Fallback waveform if no audio track
+          waveform = Array.from({ length: 40 }, () => 0.2 + Math.random() * 0.6);
+        }
+
+        const newClip: VideoClip = {
+          id: `clip-${Date.now()}-${i}`,
+          name: file.name,
+          sourceUrl,
+          blob: file,
+          originalDuration: duration,
+          inPoint: 0,
+          outPoint: duration,
+          duration: duration,
+          startTimelineTime: 0,
+          speed: 1.0,
+          volume: 1.0,
+          zoomScale: 1.0,
+          zoomCenter: { x: 0.5, y: 0.45 },
+          transitionIn: 'whip-pan',
+          transitionDuration: 0.25,
+          waveform,
+        };
+
+        onAddClip(newClip);
       }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
-      const newClip: VideoClip = {
-        id: `clip-${Date.now()}-${i}`,
-        name: file.name,
-        sourceUrl,
-        blob: file,
-        originalDuration: duration,
-        inPoint: 0,
-        outPoint: duration,
-        duration: duration,
-        startTimelineTime: 0,
-        speed: 1.0,
-        volume: 1.0,
-        zoomScale: 1.0,
-        zoomCenter: { x: 0.5, y: 0.45 },
-        transitionIn: 'whip-pan',
-        transitionDuration: 0.25,
-        waveform,
-      };
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) processFiles(e.target.files);
+  };
 
-      onAddClip(newClip);
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    if (e.dataTransfer.files) {
+      processFiles(e.dataTransfer.files);
     }
   };
 
@@ -101,10 +130,17 @@ export const AssetBin: React.FC<AssetBinProps> = ({
 
   return (
     <div className="p-3 space-y-4">
-      {/* Upload Drop Zone */}
+      {/* Upload Drop Zone with Drag-and-Drop */}
       <div
         onClick={() => fileInputRef.current?.click()}
-        className="border-2 border-dashed border-slate-700/80 hover:border-indigo-500 rounded-xl p-4 text-center bg-slate-900/60 hover:bg-slate-900 cursor-pointer transition group"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition group ${
+          isDraggingOver
+            ? 'border-indigo-400 bg-indigo-950/40 ring-2 ring-indigo-500/50'
+            : 'border-slate-700/80 hover:border-indigo-500 bg-slate-900/60 hover:bg-slate-900'
+        }`}
       >
         <input
           ref={fileInputRef}
@@ -115,10 +151,12 @@ export const AssetBin: React.FC<AssetBinProps> = ({
           className="hidden"
         />
         <div className="w-10 h-10 mx-auto rounded-full bg-indigo-500/10 text-indigo-400 group-hover:scale-110 flex items-center justify-center mb-2 transition">
-          <UploadCloud className="w-5 h-5" />
+          <UploadCloud className={`w-5 h-5 ${isProcessing ? 'animate-bounce text-indigo-300' : ''}`} />
         </div>
-        <div className="text-xs font-bold text-slate-200">Upload Raw Footage or Audio</div>
-        <div className="text-[10px] text-slate-400 mt-0.5">MP4, MOV, WebM, MP3</div>
+        <div className="text-xs font-bold text-slate-200">
+          {isProcessing ? 'Decoding & Ingesting Media...' : 'Upload Raw Footage or Audio'}
+        </div>
+        <div className="text-[10px] text-slate-400 mt-0.5">Drag & drop or browse MP4, MOV, WebM, MP3</div>
       </div>
 
       {/* 1-Click High-Energy Demo Loader */}

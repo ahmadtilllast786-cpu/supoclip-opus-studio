@@ -66,6 +66,42 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const [isDraggingOverlay, setIsDraggingOverlay] = useState(false);
   const lastTriggeredSfxRef = useRef<Set<string>>(new Set());
 
+  // Mutable state refs to prevent re-instantiating RAF loop on every frame
+  const currentTimeRef = useRef(currentTime);
+  const isPlayingRef = useRef(isPlaying);
+  const clipsRef = useRef(clips);
+  const videoElementsRef = useRef(videoElements);
+  const isMutedRef = useRef(isMuted);
+
+  useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+    if (!isPlaying) {
+      // When pausing, immediately pause all active video elements
+      videoElementsRef.current.forEach((vid) => {
+        if (!vid.paused) vid.pause();
+      });
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
+    clipsRef.current = clips;
+  }, [clips]);
+
+  useEffect(() => {
+    videoElementsRef.current = videoElements;
+  }, [videoElements]);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+    videoElements.forEach((vid) => {
+      vid.muted = isMuted;
+    });
+  }, [isMuted, videoElements]);
+
   // Parse width/height from resolution string
   const [targetWidth, targetHeight] = resolution.split('x').map(Number);
   const aspectRatio = targetWidth / targetHeight;
@@ -76,24 +112,128 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   // Active Punch Zoom info
   const punchZoom = calculatePunchZoom(currentTime, zoomKeyframes);
 
-  // 1. Master Playback & Animation Loop
+  // 1. Master Playback & Animation Loop (Sequential Video Engine)
   useEffect(() => {
     let animationFrameId: number;
     let lastTimestamp = performance.now();
 
     const loop = (timestamp: number) => {
-      const delta = (timestamp - lastTimestamp) / 1000;
+      const delta = Math.min(0.1, (timestamp - lastTimestamp) / 1000);
       lastTimestamp = timestamp;
 
-      if (isPlaying) {
-        setCurrentTime((prev) => {
-          const nextTime = prev + delta;
-          if (nextTime >= totalDuration && totalDuration > 0) {
-            setIsPlaying(false);
-            return totalDuration;
+      let time = currentTimeRef.current;
+      const curClips = clipsRef.current;
+      const curVideoElements = videoElementsRef.current;
+      const playing = isPlayingRef.current;
+      const muted = isMutedRef.current;
+
+      if (playing && totalDuration > 0) {
+        // Locate active clip at current playhead
+        const activeClipIndex = curClips.findIndex(
+          (c) => time >= c.startTimelineTime && time < c.startTimelineTime + c.duration
+        );
+
+        if (activeClipIndex !== -1) {
+          const activeClip = curClips[activeClipIndex];
+          const activeVideo = curVideoElements.get(activeClip.id);
+
+          if (activeVideo) {
+            activeVideo.muted = muted;
+            activeVideo.volume = activeClip.volume;
+
+            const targetVideoTime =
+              activeClip.inPoint + (time - activeClip.startTimelineTime) * activeClip.speed;
+
+            // Start active video if paused and not currently seeking
+            if (activeVideo.paused && !activeVideo.seeking) {
+              if (Math.abs(activeVideo.currentTime - targetVideoTime) > 0.15) {
+                activeVideo.currentTime = targetVideoTime;
+              }
+              activeVideo.play().catch(() => {});
+            }
+
+            // Check if active clip finished its segment
+            const isClipEnded =
+              activeVideo.ended ||
+              activeVideo.currentTime >= activeClip.outPoint - 0.04 ||
+              time >= activeClip.startTimelineTime + activeClip.duration - 0.02;
+
+            if (isClipEnded) {
+              // Pause current clip
+              activeVideo.pause();
+
+              // Switch to next sequential clip
+              const nextClipIndex = activeClipIndex + 1;
+              if (nextClipIndex < curClips.length) {
+                const nextClip = curClips[nextClipIndex];
+                const nextVideo = curVideoElements.get(nextClip.id);
+                if (nextVideo) {
+                  nextVideo.currentTime = nextClip.inPoint;
+                  nextVideo.muted = muted;
+                  nextVideo.volume = nextClip.volume;
+                  nextVideo.play().catch(() => {});
+                }
+                time = nextClip.startTimelineTime;
+              } else {
+                // End of sequence
+                time = totalDuration;
+                setIsPlaying(false);
+              }
+            } else if (!activeVideo.paused) {
+              // Hardware video clock: slave playhead to the active playing video
+              const videoTimelineTime =
+                activeClip.startTimelineTime +
+                (activeVideo.currentTime - activeClip.inPoint) / activeClip.speed;
+
+              // Only correct if heavy drift (>0.35s)
+              if (Math.abs(videoTimelineTime - time) > 0.35) {
+                activeVideo.currentTime = targetVideoTime;
+              } else {
+                time = videoTimelineTime;
+              }
+            } else {
+              // Active video starting up: gently advance clock
+              time += delta;
+            }
+
+            // Pre-warm / pre-seek upcoming clip when approaching transition window (< 0.8s)
+            const timeLeftInClip = activeClip.startTimelineTime + activeClip.duration - time;
+            if (timeLeftInClip <= 0.8 && activeClipIndex + 1 < curClips.length) {
+              const nextClip = curClips[activeClipIndex + 1];
+              const nextVideo = curVideoElements.get(nextClip.id);
+              if (
+                nextVideo &&
+                nextVideo.paused &&
+                Math.abs(nextVideo.currentTime - nextClip.inPoint) > 0.05
+              ) {
+                nextVideo.currentTime = nextClip.inPoint;
+              }
+            }
+
+            // Ensure all other inactive clips are paused
+            curVideoElements.forEach((vid, id) => {
+              if (id !== activeClip.id && !vid.paused) {
+                vid.pause();
+              }
+            });
+          } else {
+            time += delta;
           }
-          return nextTime;
-        });
+        } else {
+          // Playhead is in a gap or past clips
+          time += delta;
+        }
+
+        if (time >= totalDuration && totalDuration > 0) {
+          time = totalDuration;
+          setIsPlaying(false);
+          curVideoElements.forEach((vid) => {
+            if (!vid.paused) vid.pause();
+          });
+        }
+
+        currentTimeRef.current = time;
+        setCurrentTime(time);
       }
 
       // Render canvas frame
@@ -102,11 +242,11 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
         const ctx = canvas.getContext('2d');
         if (ctx) {
           renderCompositedFrame(ctx, {
-            currentTime,
-            clips,
+            currentTime: time,
+            clips: curClips,
             overlays,
             zoomKeyframes,
-            videoElements,
+            videoElements: curVideoElements,
             width: targetWidth,
             height: targetHeight,
             words,
@@ -121,39 +261,32 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
 
     animationFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isPlaying, currentTime, clips, overlays, zoomKeyframes, videoElements, targetWidth, targetHeight, totalDuration, setCurrentTime, setIsPlaying, words, captionTemplate, hookTitle]);
+  }, [totalDuration, targetWidth, targetHeight, overlays, zoomKeyframes, words, captionTemplate, hookTitle, setCurrentTime, setIsPlaying]);
 
-  // 2. Video Element Frame Synchronization & Audio Sync
+  // 2. Handle scrubbing / seek when paused
   useEffect(() => {
-    clips.forEach((clip) => {
-      const videoEl = videoElements.get(clip.id);
-      if (!videoEl) return;
+    if (!isPlaying) {
+      clips.forEach((clip) => {
+        const videoEl = videoElements.get(clip.id);
+        if (!videoEl) return;
 
-      const isInside = currentTime >= clip.startTimelineTime && currentTime < clip.startTimelineTime + clip.duration;
+        const isInside =
+          currentTime >= clip.startTimelineTime &&
+          currentTime <= clip.startTimelineTime + clip.duration;
 
-      if (isInside) {
-        const targetVideoTime = clip.inPoint + (currentTime - clip.startTimelineTime) * clip.speed;
-        
-        // Sync time if drift is > 50ms
-        if (Math.abs(videoEl.currentTime - targetVideoTime) > 0.05) {
-          videoEl.currentTime = targetVideoTime;
+        if (isInside) {
+          const targetVideoTime =
+            clip.inPoint + (currentTime - clip.startTimelineTime) * clip.speed;
+          if (Math.abs(videoEl.currentTime - targetVideoTime) > 0.03) {
+            videoEl.currentTime = targetVideoTime;
+          }
         }
-
-        videoEl.muted = isMuted;
-        videoEl.volume = clip.volume;
-
-        if (isPlaying && videoEl.paused) {
-          videoEl.play().catch(() => {});
-        } else if (!isPlaying && !videoEl.paused) {
-          videoEl.pause();
-        }
-      } else {
         if (!videoEl.paused) {
           videoEl.pause();
         }
-      }
-    });
-  }, [currentTime, isPlaying, clips, videoElements, isMuted]);
+      });
+    }
+  }, [currentTime, isPlaying, clips, videoElements]);
 
   // 3. Trigger Synchronized SFX Nodes when Playhead passes sticker start time
   useEffect(() => {

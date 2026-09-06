@@ -30,7 +30,7 @@ import { ExportModal } from './components/Modals/ExportModal';
 import { executeAutoViralEdit } from './core/ai/autoEditor';
 import { generateDemoVideoClip } from './core/video/demoMediaGenerator';
 import { SUPOCLIP_CAPTION_TEMPLATES } from './core/captions/supoClipTemplates';
-import { generateViralMoments } from './core/ai/viralityScorer';
+import { generateViralMoments, generateAdaptiveTranscript } from './core/ai/viralityScorer';
 
 export function App() {
   const [clips, setClips] = useState<VideoClip[]>([]);
@@ -146,14 +146,33 @@ export function App() {
   // Total duration of current sequence
   const totalDuration = clips.reduce((acc, c) => Math.max(acc, c.startTimelineTime + c.duration), 0);
 
-  // Add Clip sequentially to timeline
+  // Add Clip sequentially to timeline and auto-align captions across full duration
   const handleAddClip = useCallback((newClip: VideoClip) => {
     setClips((prev) => {
       const lastClip = prev[prev.length - 1];
       const startTimelineTime = lastClip ? lastClip.startTimelineTime + lastClip.duration : 0;
-      return [...prev, { ...newClip, startTimelineTime }];
+      const updated = [...prev, { ...newClip, startTimelineTime }];
+
+      // Adapt captions to match new total sequence duration
+      const totalDur = updated.reduce((sum, c) => sum + c.duration, 0);
+      setWords((prevWords) => {
+        if (prevWords.length === 0 || prevWords[prevWords.length - 1].end < totalDur - 1.5) {
+          return generateAdaptiveTranscript(totalDur);
+        }
+        return prevWords;
+      });
+
+      // Recalculate viral moments
+      const moments = generateViralMoments(updated);
+      setViralMoments(moments);
+      if (moments.length > 0 && !activeMomentId) {
+        setActiveMomentId(moments[0].id);
+        setHookTitle(moments[0].scores.hookTitle);
+      }
+
+      return updated;
     });
-  }, []);
+  }, [activeMomentId]);
 
   // Add Sticker with Paired SFX
   const handleAddOverlayAndSfx = useCallback((overlay: StickerOverlay, sfx: SfxTrackItem) => {
@@ -223,8 +242,21 @@ export function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#07090e] text-slate-100 overflow-hidden font-sans select-none">
-      {/* Hidden container for preloading and decoding video frames */}
-      <div ref={hiddenVideosContainerRef} className="hidden" aria-hidden="true" />
+      {/* Offscreen container for active decoding and preloading of video frames */}
+      <div
+        ref={hiddenVideosContainerRef}
+        style={{
+          position: 'fixed',
+          top: '-99999px',
+          left: '-99999px',
+          width: '2px',
+          height: '2px',
+          opacity: 0.001,
+          pointerEvents: 'none',
+          overflow: 'hidden',
+        }}
+        aria-hidden="true"
+      />
 
       {/* Top Navbar */}
       <Navbar
@@ -410,10 +442,27 @@ export function App() {
           onUpdateClip={(updated) =>
             setClips((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
           }
+          onDeleteClip={(id) => {
+            setClips((prev) => {
+              const filtered = prev.filter((c) => c.id !== id);
+              let curTime = 0;
+              return filtered.map((c) => {
+                const item = { ...c, startTimelineTime: curTime };
+                curTime += c.duration;
+                return item;
+              });
+            });
+            setSelectedClipId(null);
+          }}
           selectedOverlay={selectedOverlay}
           onUpdateOverlay={(updated) =>
             setOverlays((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
           }
+          onDeleteOverlay={(id) => {
+            setOverlays((prev) => prev.filter((o) => o.id !== id));
+            setSfxTracks((prev) => prev.filter((s) => s.linkedOverlayId !== id));
+            setSelectedOverlayId(null);
+          }}
           sfxTracks={sfxTracks}
           onUpdateSfx={(updated) =>
             setSfxTracks((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))

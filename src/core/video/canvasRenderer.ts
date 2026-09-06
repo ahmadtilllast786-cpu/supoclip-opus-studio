@@ -129,8 +129,12 @@ export function renderCompositedFrame(
     } else {
       // Normal single clip playback
       const videoEl = videoElements.get(currentClip.id);
-      if (videoEl && videoEl.readyState >= 2) {
-        drawCroppedVideo(ctx, videoEl, width, height);
+      if (videoEl && (videoEl.readyState >= 1 || videoEl.videoWidth > 0)) {
+        try {
+          drawCroppedVideo(ctx, videoEl, width, height);
+        } catch {
+          drawClipPlaceholder(ctx, currentClip.name, width, height);
+        }
       } else {
         drawClipPlaceholder(ctx, currentClip.name, width, height);
       }
@@ -194,7 +198,11 @@ function drawCroppedVideo(
     sy = (vHeight - sHeight) / 2;
   }
 
-  ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
+  try {
+    ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvasWidth, canvasHeight);
+  } catch {
+    // Gracefully ignore if browser frame decode is transiently locked
+  }
 }
 
 /**
@@ -213,13 +221,20 @@ function drawTransitionedClips(
   off1.width = width;
   off1.height = height;
   const ctx1 = off1.getContext('2d');
-  if (ctx1) drawCroppedVideo(ctx1, outgoingVideo, width, height);
+  if (ctx1 && (outgoingVideo.readyState >= 1 || outgoingVideo.videoWidth > 0)) {
+    drawCroppedVideo(ctx1, outgoingVideo, width, height);
+  }
 
   const off2 = document.createElement('canvas');
   off2.width = width;
   off2.height = height;
   const ctx2 = off2.getContext('2d');
-  if (ctx2) drawCroppedVideo(ctx2, incomingVideo, width, height);
+  if (ctx2 && (incomingVideo.readyState >= 1 || incomingVideo.videoWidth > 0)) {
+    drawCroppedVideo(ctx2, incomingVideo, width, height);
+  } else if (ctx2 && ctx1) {
+    // If incoming frame not yet ready, draw outgoing so no black flash occurs
+    drawCroppedVideo(ctx2, outgoingVideo, width, height);
+  }
 
   renderTransition(ctx, off1, off2, progress, transition, width, height);
 }

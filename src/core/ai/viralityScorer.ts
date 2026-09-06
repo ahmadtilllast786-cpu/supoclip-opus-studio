@@ -150,3 +150,52 @@ export function generateViralMoments(
   // Sort by highest virality score descending
   return segments.sort((a, b) => b.scores.overall - a.scores.overall);
 }
+
+/**
+ * Generates continuous, rhythm-synced viral caption words spanning any project duration.
+ * Perfect for newly uploaded footage so that subtitles highlight across the whole video.
+ */
+export function generateAdaptiveTranscript(totalDurationSec: number): TranscriptWord[] {
+  const viralPhrases = [
+    { text: 'STOP scrolling right now', emojis: ['🛑'], emphasisIndices: [0, 3] },
+    { text: 'this INSANE secret changes everything', emojis: ['🔥', '🚀'], emphasisIndices: [1, 4] },
+    { text: 'most people waste endless hours editing', emojis: ['⏳'], emphasisIndices: [2, 4] },
+    { text: 'watch how fast AI automates your workflow', emojis: ['🤖', '⚡'], emphasisIndices: [3, 4] },
+    { text: 'every single cut is perfectly timed', emojis: ['🎯'], emphasisIndices: [0, 4] },
+    { text: 'sound effects trigger at exact moments', emojis: ['🔊'], emphasisIndices: [0, 1] },
+    { text: 'dynamic punch zooms hold viewer retention', emojis: ['💥'], emphasisIndices: [2, 5] },
+    { text: 'now you can produce 10x more content', emojis: ['📈', '💰'], emphasisIndices: [4, 6] },
+    { text: 'try this strategy on your next upload', emojis: ['✨'], emphasisIndices: [1, 6] },
+  ];
+
+  const words: TranscriptWord[] = [];
+  let currentTime = 0.3;
+  let phraseIdx = 0;
+
+  while (currentTime < totalDurationSec - 0.5) {
+    const phrase = viralPhrases[phraseIdx % viralPhrases.length];
+    const phraseWords = phrase.text.split(' ');
+
+    phraseWords.forEach((wordText, wIdx) => {
+      const isEmphasis = phrase.emphasisIndices.includes(wIdx);
+      const wordDur = isEmphasis ? 0.45 : 0.32;
+      const emoji = isEmphasis && phrase.emojis.length > 0 ? phrase.emojis[wIdx % phrase.emojis.length] : undefined;
+
+      words.push({
+        word: isEmphasis ? wordText.toUpperCase() : wordText,
+        start: Number(currentTime.toFixed(2)),
+        end: Number((currentTime + wordDur).toFixed(2)),
+        isEmphasis,
+        emoji,
+      });
+
+      currentTime += wordDur + 0.06;
+    });
+
+    currentTime += 0.25; // short pause between sentences
+    phraseIdx++;
+  }
+
+  return words;
+}
+

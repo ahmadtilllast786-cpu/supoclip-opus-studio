@@ -10,6 +10,7 @@ import {
   Move,
   Maximize,
   Clock,
+  Trash2,
 } from 'lucide-react';
 import {
   VideoClip,
@@ -24,8 +25,10 @@ import { playSfxInstant } from '../../core/audio/sfxSynthesizer';
 interface PropertyInspectorProps {
   selectedClip: VideoClip | null;
   onUpdateClip: (clip: VideoClip) => void;
+  onDeleteClip?: (id: string) => void;
   selectedOverlay: StickerOverlay | null;
   onUpdateOverlay: (overlay: StickerOverlay) => void;
+  onDeleteOverlay?: (id: string) => void;
   sfxTracks: SfxTrackItem[];
   onUpdateSfx: (sfx: SfxTrackItem) => void;
   totalDuration: number;
@@ -36,8 +39,10 @@ interface PropertyInspectorProps {
 export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
   selectedClip,
   onUpdateClip,
+  onDeleteClip,
   selectedOverlay,
   onUpdateOverlay,
+  onDeleteOverlay,
   sfxTracks,
   onUpdateSfx,
   totalDuration,
@@ -53,7 +58,19 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
             <Video className="w-3.5 h-3.5 mr-1.5" />
             Clip Inspector
           </span>
-          <span className="text-[10px] font-mono text-slate-400">{selectedClip.duration.toFixed(2)}s</span>
+          <div className="flex items-center space-x-1.5">
+            <span className="text-[10px] font-mono text-slate-400">{selectedClip.duration.toFixed(2)}s</span>
+            {onDeleteClip && (
+              <button
+                onClick={() => onDeleteClip(selectedClip.id)}
+                className="flex items-center space-x-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white px-2 py-0.5 rounded text-[10px] font-semibold transition border border-rose-500/30"
+                title="Delete this clip"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Delete</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="text-xs font-semibold text-slate-200 truncate">{selectedClip.name}</div>
@@ -203,7 +220,19 @@ export const PropertyInspector: React.FC<PropertyInspectorProps> = ({
             <Smile className="w-3.5 h-3.5 mr-1.5" />
             Sticker & SFX Inspector
           </span>
-          <span className="text-xl">{selectedOverlay.emoji}</span>
+          <div className="flex items-center space-x-2">
+            <span className="text-xl">{selectedOverlay.emoji}</span>
+            {onDeleteOverlay && (
+              <button
+                onClick={() => onDeleteOverlay(selectedOverlay.id)}
+                className="flex items-center space-x-1 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white px-2 py-0.5 rounded text-[10px] font-semibold transition border border-rose-500/30"
+                title="Delete this sticker"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Delete</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Label & Text */}
