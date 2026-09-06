@@ -7,6 +7,7 @@ interface TimelineRulerProps {
   pixelsPerSecond: number;
   currentTime: number;
   onSeek: (time: number) => void;
+  onScrubStart?: () => void;
   headerWidth: number;
   timecodeMode: 'standard' | 'smpte';
 }
@@ -17,6 +18,7 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
   pixelsPerSecond,
   currentTime,
   onSeek,
+  onScrubStart,
   headerWidth,
   timecodeMode,
 }) => {
@@ -41,23 +43,26 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Convert mouse X to time in seconds
-  const getTimeFromEvent = (e: React.MouseEvent<HTMLDivElement> | MouseEvent) => {
+  // Convert mouse X to exact time in seconds clamped to duration
+  const getTimeFromEvent = (e: React.MouseEvent<HTMLDivElement> | MouseEvent | PointerEvent | React.PointerEvent) => {
     if (!rulerRef.current) return 0;
     const rect = rulerRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const relativeX = clickX - headerWidth;
-    return Math.max(0, relativeX / pixelsPerSecond);
+    const maxAllowedTime = projectEndSec > 0 ? projectEndSec : totalDuration;
+    return Number(Math.max(0, Math.min(maxAllowedTime, relativeX / pixelsPerSecond)).toFixed(3));
   };
 
   const rafRef = useRef<number | null>(null);
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    onScrubStart?.();
     const time = getTimeFromEvent(e);
     onSeek(time);
     setIsRulerDragging(true);
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
+    const handlePointerMove = (moveEvent: PointerEvent) => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(() => {
         const moveTime = getTimeFromEvent(moveEvent);
@@ -65,26 +70,28 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
       });
     };
 
-    const handleMouseUp = () => {
+    const handlePointerUp = () => {
       setIsRulerDragging(false);
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const time = getTimeFromEvent(e);
     setHoverTime(time);
   };
 
-  const handleMouseLeave = () => {
+  const handlePointerLeave = () => {
     setHoverTime(null);
   };
 
@@ -105,9 +112,9 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
   return (
     <div
       ref={rulerRef}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
       className="relative h-7 bg-slate-900 border-b border-slate-700/90 select-none cursor-pointer flex items-center overflow-visible"
     >
       {/* Sticky Header Corner aligned with Track Headers */}

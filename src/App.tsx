@@ -616,6 +616,8 @@ export function App() {
             setSelectedCaptionId(null);
           }
         }}
+        isPlaying={isPlaying}
+        setIsPlaying={setIsPlaying}
         onAddPunchZoom={handleAddPunchZoom}
       />
 

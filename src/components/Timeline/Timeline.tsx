@@ -63,6 +63,8 @@ interface TimelineProps {
   words?: TranscriptWord[];
   setWords?: React.Dispatch<React.SetStateAction<TranscriptWord[]>>;
   detectedLanguage?: string;
+  isPlaying?: boolean;
+  setIsPlaying?: (playing: boolean) => void;
   onAddPunchZoom: () => void;
 }
 
@@ -90,6 +92,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   words = [],
   setWords,
   detectedLanguage = 'en',
+  isPlaying = false,
+  setIsPlaying,
   onAddPunchZoom,
 }) => {
   // Timeline Zoom & Viewport Sizing (Adjusted to One Screen by Default)
@@ -179,6 +183,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
   // Active Drop Zone Highlight State
   const [dragOverTrack, setDragOverTrack] = useState<'c1' | 'v2' | 'v1' | 'a2' | null>(null);
+  const [isScrubbingPlayhead, setIsScrubbingPlayhead] = useState(false);
   const hasMovedRef = useRef(false);
   const rafItemDragRef = useRef<number | null>(null);
 
@@ -473,18 +478,20 @@ export const Timeline: React.FC<TimelineProps> = ({
     if (setSelectedSfxId) setSelectedSfxId(newSfx.id);
   }, [isSfxLocked, currentTime, setSfxTracks, setSelectedSfxId]);
 
-  // Update time from mouse X coordinates with magnetic snapping
-  const updateTimeFromMouse = useCallback(
-    (clientX: number) => {
-      if (!containerRef.current) return;
+  // Convert mouse/pointer X coordinate to exact timeline seconds with precise clamping
+  const getTimeFromClientX = useCallback(
+    (clientX: number, snap: boolean = false) => {
+      if (!containerRef.current) return 0;
       const rect = containerRef.current.getBoundingClientRect();
       const scrollLeft = containerRef.current.scrollLeft;
       const clickX = clientX - rect.left + scrollLeft;
       const relativeX = clickX - TRACK_HEADER_WIDTH;
-      let targetTime = Math.max(0, relativeX / pixelsPerSecond);
+      const maxAllowedTime = projectEndSec > 0 ? projectEndSec : totalDuration;
+      let targetTime = Math.max(0, Math.min(maxAllowedTime, relativeX / pixelsPerSecond));
 
-      if (isSnappingEnabled) {
-        const snapThresholdSec = 10 / pixelsPerSecond;
+      if (snap && isSnappingEnabled) {
+        // Fine 4px snap threshold so it assists cuts without violently jerking the needle away
+        const snapThresholdSec = 4 / pixelsPerSecond;
         const snapPoints = getSnapPoints();
         const nearest = snapPoints.find((p) => Math.abs(p - targetTime) <= snapThresholdSec);
         if (nearest !== undefined) {
@@ -497,15 +504,73 @@ export const Timeline: React.FC<TimelineProps> = ({
         setSnapGuideTime(null);
       }
 
-      setCurrentTime(targetTime);
+      return Number(targetTime.toFixed(3));
     },
-    [pixelsPerSecond, isSnappingEnabled, getSnapPoints, TRACK_HEADER_WIDTH, setCurrentTime]
+    [pixelsPerSecond, projectEndSec, totalDuration, TRACK_HEADER_WIDTH, isSnappingEnabled, getSnapPoints]
   );
+
+  // Dedicated Playhead Pointer Drag Scrubber (1:1 Cursor Tracking & Pause-on-Scrub)
+  const handlePlayheadPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (isPlaying && setIsPlaying) {
+      setIsPlaying(false);
+    }
+
+    setIsScrubbingPlayhead(true);
+    const initialTime = getTimeFromClientX(e.clientX, false);
+    setCurrentTime(initialTime);
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (!containerRef.current) return;
+
+      // Smooth auto-scroll when dragging near viewport edges
+      const rect = containerRef.current.getBoundingClientRect();
+      const leftBoundary = rect.left + TRACK_HEADER_WIDTH + 40;
+      const rightBoundary = rect.right - 40;
+      if (moveEvent.clientX > rightBoundary) {
+        const speed = Math.min(25, (moveEvent.clientX - rightBoundary) * 0.4);
+        containerRef.current.scrollLeft += speed;
+      } else if (moveEvent.clientX < leftBoundary) {
+        const speed = Math.min(25, (leftBoundary - moveEvent.clientX) * 0.4);
+        containerRef.current.scrollLeft -= speed;
+      }
+
+      const targetTime = getTimeFromClientX(moveEvent.clientX, isSnappingEnabled);
+      setCurrentTime(targetTime);
+    };
+
+    const handlePointerUp = () => {
+      setIsScrubbingPlayhead(false);
+      setSnapGuideTime(null);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+  };
+
+  // Format time for floating playhead tooltip HUD
+  const formatPlayheadTime = (sec: number) => {
+    const mins = Math.floor(sec / 60);
+    const secs = Math.floor(sec % 60);
+    const ms = Math.floor((sec % 1) * 100);
+    if (timecodeMode === 'smpte') {
+      const frames = Math.floor((sec % 1) * 30);
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${frames.toString().padStart(2, '0')}`;
+    }
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+  };
 
   // Throttled scrubbing with requestAnimationFrame for 60fps smoothness
   const rafScrubRef = useRef<number | null>(null);
 
-  // Hand / Pan Tool dragging
+  // Hand / Pan Tool dragging & Track Background Scrubbing
   const handleTimelineMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     // If Hand tool is active, start dragging the canvas horizontally
     if (toolMode === 'hand' && containerRef.current) {
@@ -537,16 +602,31 @@ export const Timeline: React.FC<TimelineProps> = ({
     const target = e.target as HTMLElement;
     if (target.closest('button') || target.closest('[data-no-scrub]')) return;
 
-    updateTimeFromMouse(e.clientX);
+    if (isPlaying && setIsPlaying) {
+      setIsPlaying(false);
+    }
+
+    setIsScrubbingPlayhead(true);
+    const initialTime = getTimeFromClientX(e.clientX, false);
+    setCurrentTime(initialTime);
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (rafScrubRef.current !== null) cancelAnimationFrame(rafScrubRef.current);
       rafScrubRef.current = requestAnimationFrame(() => {
-        updateTimeFromMouse(moveEvent.clientX);
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        if (moveEvent.clientX > rect.right - 40) {
+          containerRef.current.scrollLeft += 15;
+        } else if (moveEvent.clientX < rect.left + TRACK_HEADER_WIDTH + 40) {
+          containerRef.current.scrollLeft -= 15;
+        }
+        const time = getTimeFromClientX(moveEvent.clientX, isSnappingEnabled);
+        setCurrentTime(time);
       });
     };
 
     const handleMouseUp = () => {
+      setIsScrubbingPlayhead(false);
       setSnapGuideTime(null);
       if (rafScrubRef.current !== null) {
         cancelAnimationFrame(rafScrubRef.current);
@@ -1097,6 +1177,9 @@ export const Timeline: React.FC<TimelineProps> = ({
             pixelsPerSecond={pixelsPerSecond}
             currentTime={currentTime}
             onSeek={setCurrentTime}
+            onScrubStart={() => {
+              if (isPlaying && setIsPlaying) setIsPlaying(false);
+            }}
             headerWidth={TRACK_HEADER_WIDTH}
             timecodeMode={timecodeMode}
           />
@@ -1996,17 +2079,59 @@ export const Timeline: React.FC<TimelineProps> = ({
           </div>
 
           {/* ========================================================= */}
-          {/* PLAYHEAD NEEDLE & HANDLE (Across All Tracks)               */}
+          {/* PLAYHEAD NEEDLE & INTERACTIVE SCRUBBER HANDLE             */}
           {/* ========================================================= */}
           <div
             style={{
               transform: `translate3d(${TRACK_HEADER_WIDTH + currentTime * pixelsPerSecond}px, 0, 0)`,
               willChange: 'transform',
             }}
-            className="absolute top-0 bottom-0 left-0 w-0.5 bg-red-500 z-50 pointer-events-none shadow-[0_0_8px_rgba(239,68,68,0.9)]"
+            className="absolute top-0 bottom-0 left-0 z-50 pointer-events-none"
           >
-            {/* Playhead Triangular Header Handle */}
-            <div className="absolute -top-0 -translate-x-1/2 w-3.5 h-4 bg-red-500 shadow-md flex items-center justify-center [clip-path:polygon(0%_0%,100%_0%,100%_65%,50%_100%,0%_65%)]" />
+            {/* Extended Vertical Needle Hit Zone (Full Timeline Height) */}
+            <div
+              onPointerDown={handlePlayheadPointerDown}
+              className="absolute top-0 bottom-0 -left-2.5 w-5 cursor-ew-resize pointer-events-auto group/needle flex justify-center"
+              title="Drag playhead line"
+            >
+              {/* Vertical Red Needle Line with Halo */}
+              <div
+                className={`w-0.5 h-full transition-all ${
+                  isScrubbingPlayhead
+                    ? 'bg-red-400 shadow-[0_0_12px_rgba(239,68,68,1)]'
+                    : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.85)] group-hover/needle:bg-red-400 group-hover/needle:shadow-[0_0_12px_rgba(239,68,68,1)]'
+                }`}
+              />
+            </div>
+
+            {/* Top Interactive Playhead Header Handle (Ruler Level) */}
+            <div
+              onPointerDown={handlePlayheadPointerDown}
+              className="absolute -top-0.5 -translate-x-1/2 cursor-ew-resize pointer-events-auto group/head z-50 flex flex-col items-center select-none"
+              title="Drag playhead scrubber"
+            >
+              {/* Triangular Downward Handle Icon */}
+              <div
+                className={`w-4 h-5 flex items-center justify-center transition-all ${
+                  isScrubbingPlayhead ? 'scale-110 shadow-lg shadow-red-500/50' : 'group-hover/head:scale-105'
+                }`}
+              >
+                <div
+                  className={`w-full h-full bg-gradient-to-b from-red-500 to-rose-600 shadow-md flex items-center justify-center [clip-path:polygon(0%_0%,100%_0%,100%_60%,50%_100%,0%_60%)] ${
+                    isScrubbingPlayhead ? 'from-red-400 to-rose-500 ring-1 ring-white/60' : ''
+                  }`}
+                >
+                  <div className="w-1 h-1 bg-white/90 rounded-full -translate-y-0.5" />
+                </div>
+              </div>
+
+              {/* Real-time floating HUD Tooltip while dragging */}
+              {isScrubbingPlayhead && (
+                <div className="absolute -top-6 px-1.5 py-0.5 bg-red-600 text-white font-mono font-bold text-[9px] rounded shadow-xl whitespace-nowrap pointer-events-none border border-red-400">
+                  {formatPlayheadTime(currentTime)}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
