@@ -32,6 +32,7 @@ import {
   SfxPreset,
   TransitionType,
 } from '../../types/timeline';
+import { extractClipWaveformSegment } from '../../core/audio/audioAnalyzer';
 
 interface TimelineProps {
   currentTime: number;
@@ -90,17 +91,23 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [trimInitialIn, setTrimInitialIn] = useState(0);
   const [trimInitialOut, setTrimInitialOut] = useState(0);
 
-  // Total duration of project
-  const totalDuration = Math.max(
-    10,
-    clips.reduce((acc, c) => Math.max(acc, c.startTimelineTime + c.duration), 0)
+  // Fixed track header width (w-28 = 112px) for pixel-perfect alignment
+  const TRACK_HEADER_WIDTH = 112;
+
+  // Exact ending boundary time of all video clips
+  const projectEndSec = clips.reduce(
+    (acc, c) => Math.max(acc, c.startTimelineTime + c.duration),
+    0
   );
 
-  const timelineWidth = Math.max(1200, totalDuration * pixelsPerSecond + 250);
+  // Total duration of project (minimum 10s for comfortable UI buffer)
+  const totalDuration = Math.max(10, projectEndSec);
 
-  // Calculate magnetic snap points (clip cuts, boundaries, overlay starts)
+  const timelineWidth = Math.max(1200, TRACK_HEADER_WIDTH + (totalDuration + 2) * pixelsPerSecond + 150);
+
+  // Calculate magnetic snap points (0, projectEnd, clip cuts, boundaries, overlay starts)
   const getSnapPoints = useCallback((): number[] => {
-    const points = new Set<number>([0]);
+    const points = new Set<number>([0, Number(projectEndSec.toFixed(3))]);
     clips.forEach((c) => {
       points.add(Number(c.startTimelineTime.toFixed(3)));
       points.add(Number((c.startTimelineTime + c.duration).toFixed(3)));
@@ -109,7 +116,7 @@ export const Timeline: React.FC<TimelineProps> = ({
       points.add(Number(o.startTimelineTime.toFixed(3)));
     });
     return Array.from(points);
-  }, [clips, overlays]);
+  }, [clips, overlays, projectEndSec]);
 
   // Format time (Standard vs SMPTE HH:MM:SS:FF)
   const formatTimecode = (seconds: number) => {
@@ -349,8 +356,14 @@ export const Timeline: React.FC<TimelineProps> = ({
     }
   };
 
-  // Scrubber mouse drag with Magnetic Snapping
+  // Scrubber mouse drag with Magnetic Snapping & Header Offset
   const handleRulerMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!rulerRef.current) return;
+    const rect = rulerRef.current.getBoundingClientRect();
+    if (e.clientX - rect.left < TRACK_HEADER_WIDTH) {
+      setCurrentTime(0);
+      return;
+    }
     setIsScrubbing(true);
     updateTimeFromMouse(e);
   };
@@ -358,7 +371,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   const updateTimeFromMouse = (e: React.MouseEvent<HTMLDivElement> | MouseEvent) => {
     if (!rulerRef.current) return;
     const rect = rulerRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
+    const clickX = e.clientX - rect.left - TRACK_HEADER_WIDTH;
     let targetTime = Math.max(0, Math.min(totalDuration, clickX / pixelsPerSecond));
 
     // Apply Magnetic Snapping
@@ -624,27 +637,72 @@ export const Timeline: React.FC<TimelineProps> = ({
           style={{ width: `${timelineWidth}px` }}
           className="relative min-h-full pb-4"
         >
-          {/* Time Ruler - Mousedown restricted strictly to ruler bar */}
+          {/* Time Ruler - with matching sticky header corner */}
           <div
             ref={rulerRef}
             onMouseDown={handleRulerMouseDown}
             className="h-7 bg-[#0f141f] hover:bg-[#141b2a] border-b border-slate-800/80 sticky top-0 z-20 flex items-center cursor-pointer transition select-none"
             title="Click or drag on ruler to scrub playhead"
           >
+            {/* Sticky Header Corner (w-28 = 112px matching track headers) */}
+            <div className="sticky left-0 w-28 h-full z-30 bg-[#121824] border-r border-slate-800 px-2 flex items-center justify-between text-[10px] font-mono text-slate-400 font-bold uppercase tracking-wider shrink-0">
+              <span className="flex items-center space-x-1">
+                <Clock className="w-3 h-3 text-slate-400" />
+                <span>RULER</span>
+              </span>
+            </div>
+
+            {/* Inactive hatched space past projectEndSec on Ruler */}
+            {projectEndSec > 0 && (
+              <div
+                style={{
+                  left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px`,
+                  width: `${Math.max(150, timelineWidth - (TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond))}px`,
+                }}
+                className="absolute top-0 bottom-0 bg-[repeating-linear-gradient(45deg,#090d15,#090d15_10px,#0e1320_10px,#0e1320_20px)] opacity-80 pointer-events-none"
+              />
+            )}
+
+            {/* Ruler Second Marks starting after TRACK_HEADER_WIDTH */}
             {Array.from({ length: Math.ceil(totalDuration) + 2 }).map((_, sec) => (
               <div
                 key={sec}
-                style={{ left: `${sec * pixelsPerSecond}px` }}
-                className="absolute top-0 bottom-0 border-l border-slate-700/60 pl-1 text-[10px] font-mono text-slate-400 pointer-events-none"
+                style={{ left: `${TRACK_HEADER_WIDTH + sec * pixelsPerSecond}px` }}
+                className="absolute top-0 bottom-0 border-l border-slate-700/60 pl-1 text-[10px] font-mono text-slate-400 pointer-events-none flex items-center"
               >
                 {formatTimecode(sec)}
               </div>
             ))}
+
+            {/* Project End Boundary Marker on Ruler */}
+            {projectEndSec > 0 && (
+              <div
+                style={{ left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px` }}
+                className="absolute top-0 bottom-0 z-30 pointer-events-none -ml-1 flex items-center"
+              >
+                <div className="bg-rose-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded shadow-lg border border-rose-400 flex items-center space-x-1">
+                  <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping" />
+                  <span>END: {formatTimecode(projectEndSec)}</span>
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Vertical Project End Boundary Line across all tracks */}
+          {projectEndSec > 0 && (
+            <div
+              style={{ left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px` }}
+              className="absolute top-7 bottom-0 w-0.5 bg-rose-500/90 z-25 pointer-events-none shadow-[0_0_12px_rgba(244,63,94,0.9)]"
+            >
+              <div className="absolute top-1 -left-1.5 w-3.5 h-3.5 bg-rose-600 rotate-45 rounded-xs flex items-center justify-center shadow-md">
+                <div className="w-1 h-1 bg-white rounded-full" />
+              </div>
+            </div>
+          )}
 
           {/* Red Playhead Line */}
           <div
-            style={{ left: `${currentTime * pixelsPerSecond}px` }}
+            style={{ left: `${TRACK_HEADER_WIDTH + currentTime * pixelsPerSecond}px` }}
             className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.8)]"
           >
             <div className="w-3.5 h-3.5 -ml-[6px] -mt-1 bg-rose-500 rounded-sm transform rotate-45 shadow-md flex items-center justify-center">
@@ -655,7 +713,7 @@ export const Timeline: React.FC<TimelineProps> = ({
           {/* Magnetic Snap Guide Indicator Line */}
           {snapGuideTime !== null && (
             <div
-              style={{ left: `${snapGuideTime * pixelsPerSecond}px` }}
+              style={{ left: `${TRACK_HEADER_WIDTH + snapGuideTime * pixelsPerSecond}px` }}
               className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-30 pointer-events-none shadow-[0_0_8px_rgba(251,191,36,1)] animate-pulse"
             >
               <div className="bg-amber-400 text-slate-950 font-mono text-[9px] font-bold px-1 rounded -ml-6 -mt-3.5">
@@ -666,14 +724,25 @@ export const Timeline: React.FC<TimelineProps> = ({
 
           {/* TRACK 1: Stickers & Overlays */}
           <div className="h-10 border-b border-slate-800/60 relative flex items-center bg-[#0d121c]/60">
-            <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-pink-400 uppercase tracking-wider">
+            <div className="sticky left-0 w-28 z-10 bg-[#131926]/95 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-pink-400 uppercase tracking-wider shrink-0">
               <Smile className="w-3 h-3" />
               <span>Overlays</span>
             </div>
 
+            {/* Inactive region past projectEndSec */}
+            {projectEndSec > 0 && (
+              <div
+                style={{
+                  left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px`,
+                  width: `${Math.max(150, timelineWidth - (TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond))}px`,
+                }}
+                className="absolute top-0 bottom-0 bg-[repeating-linear-gradient(45deg,#070a10,#070a10_10px,#0b0f19_10px,#0b0f19_20px)] opacity-60 pointer-events-none"
+              />
+            )}
+
             {overlays.map((ov) => {
-              const left = ov.startTimelineTime * pixelsPerSecond;
-              const width = Math.max(40, ov.duration * pixelsPerSecond);
+              const left = TRACK_HEADER_WIDTH + ov.startTimelineTime * pixelsPerSecond;
+              const width = Math.max(25, ov.duration * pixelsPerSecond);
               const isSelected = selectedOverlayId === ov.id;
 
               return (
@@ -683,13 +752,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                     e.stopPropagation();
                     setSelectedOverlayId(ov.id);
                     setSelectedClipId(null);
+                    if (setSelectedSfxId) setSelectedSfxId(null);
                   }}
                   style={{ left: `${left}px`, width: `${width}px` }}
                   className={`absolute h-7 rounded-md border flex items-center justify-between px-2 cursor-pointer transition ${
                     isSelected
                       ? 'bg-pink-600/80 border-white text-white shadow-lg shadow-pink-600/30'
                       : 'bg-pink-950/60 border-pink-700/60 hover:bg-pink-900/80 text-pink-200'
-                  }`}
+                  } border-l-2 border-l-pink-400 border-r-2 border-r-pink-400`}
                 >
                   <div className="flex items-center space-x-1 truncate text-xs">
                     <span>{ov.emoji}</span>
@@ -705,7 +775,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             })}
           </div>
 
-          {/* TRACK 2: Primary Video Track */}
+          {/* TRACK 2: Primary Video Track (Pure Visual Media, Clearly Bounded) */}
           <div
             onClick={() => {
               setSelectedClipId(null);
@@ -713,14 +783,25 @@ export const Timeline: React.FC<TimelineProps> = ({
             }}
             className="h-20 border-b border-slate-800/60 relative flex items-center bg-[#090e18]/80 cursor-default"
           >
-            <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
+            <div className="sticky left-0 w-28 z-10 bg-[#131926]/95 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-indigo-400 uppercase tracking-wider shrink-0">
               <Video className="w-3 h-3" />
               <span>Video</span>
             </div>
 
+            {/* Inactive region past projectEndSec */}
+            {projectEndSec > 0 && (
+              <div
+                style={{
+                  left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px`,
+                  width: `${Math.max(150, timelineWidth - (TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond))}px`,
+                }}
+                className="absolute top-0 bottom-0 bg-[repeating-linear-gradient(45deg,#070a10,#070a10_10px,#0b0f19_10px,#0b0f19_20px)] opacity-60 pointer-events-none"
+              />
+            )}
+
             {clips.map((clip, idx) => {
-              const left = clip.startTimelineTime * pixelsPerSecond;
-              const width = Math.max(60, clip.duration * pixelsPerSecond);
+              const left = TRACK_HEADER_WIDTH + clip.startTimelineTime * pixelsPerSecond;
+              const width = Math.max(20, clip.duration * pixelsPerSecond);
               const isSelected = selectedClipId === clip.id;
 
               return (
@@ -730,7 +811,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                     <div
                       onClick={(e) => handleCycleTransition(clip.id, e)}
                       style={{ left: `${left - 12}px` }}
-                      className={`absolute z-10 top-2 -mt-1 w-6 h-6 rounded-full border flex items-center justify-center text-[9px] font-bold cursor-pointer transition shadow-md ${
+                      className={`absolute z-15 top-2 -mt-1 w-6 h-6 rounded-full border flex items-center justify-center text-[9px] font-bold cursor-pointer transition shadow-md ${
                         clip.transitionIn !== 'none'
                           ? 'bg-indigo-600 border-indigo-400 text-white animate-pulse'
                           : 'bg-slate-800 border-slate-600 text-slate-400 hover:text-white'
@@ -749,7 +830,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                     </div>
                   )}
 
-                  {/* Video Clip Block */}
+                  {/* Video Clip Block with High-Contrast Boundaries */}
                   <div
                     onClick={(e) => {
                       e.stopPropagation();
@@ -763,6 +844,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                       } else {
                         setSelectedClipId(clip.id);
                         setSelectedOverlayId(null);
+                        if (setSelectedSfxId) setSelectedSfxId(null);
                       }
                     }}
                     onMouseDown={(e) => {
@@ -770,22 +852,23 @@ export const Timeline: React.FC<TimelineProps> = ({
                       if (!isBladeMode) {
                         setSelectedClipId(clip.id);
                         setSelectedOverlayId(null);
+                        if (setSelectedSfxId) setSelectedSfxId(null);
                       }
                     }}
                     style={{ left: `${left}px`, width: `${width}px` }}
-                    className={`group absolute h-16 rounded-lg border flex flex-col justify-between p-1.5 transition-all duration-150 ${
+                    className={`group absolute h-16 rounded-lg border-2 flex flex-col justify-between p-1.5 transition-all duration-150 ${
                       isBladeMode
                         ? 'cursor-crosshair hover:ring-2 hover:ring-amber-400'
                         : 'cursor-pointer'
                     } ${
                       isSelected
-                        ? 'bg-indigo-600 border-white text-white ring-2 ring-rose-500 shadow-2xl shadow-indigo-600/50 z-10'
-                        : 'bg-indigo-950/80 border-indigo-700/60 hover:border-indigo-400 hover:bg-indigo-900/90 text-indigo-100'
-                    }`}
+                        ? 'bg-indigo-600/90 border-white text-white ring-2 ring-rose-500 shadow-2xl shadow-indigo-600/50 z-10'
+                        : 'bg-indigo-950/90 border-indigo-500/80 hover:border-indigo-400 hover:bg-indigo-900/90 text-indigo-100'
+                    } border-l-4 border-l-indigo-400 border-r-4 border-r-indigo-400`}
                     title={
                       isBladeMode
                         ? 'Click to cut clip at this position'
-                        : `Clip: ${clip.name} (Click to select, drag handles to trim, Del to delete)`
+                        : `Clip: ${clip.name} (IN: ${clip.inPoint.toFixed(1)}s, OUT: ${clip.outPoint.toFixed(1)}s, Duration: ${clip.duration.toFixed(1)}s)`
                     }
                   >
                     {/* Left Trim Handle */}
@@ -824,11 +907,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                       </div>
                     )}
 
-                    {/* Card Header */}
+                    {/* Card Header with Exact Boundaries */}
                     <div className="flex items-center justify-between text-[11px] font-semibold truncate space-x-1 px-1">
                       <span className="truncate">{clip.name}</span>
                       <div className="flex items-center space-x-1 shrink-0">
-                        <span className="text-[10px] font-mono opacity-80">{clip.duration.toFixed(1)}s</span>
+                        {/* Clear IN/OUT Boundary Tag */}
+                        <span className="text-[9px] font-mono px-1 py-0.2 bg-black/50 rounded text-indigo-200 font-bold">
+                          {clip.inPoint.toFixed(1)}s ➜ {clip.outPoint.toFixed(1)}s ({clip.duration.toFixed(1)}s)
+                        </span>
 
                         {/* Reorder Buttons when selected */}
                         {isSelected && (
@@ -875,16 +961,16 @@ export const Timeline: React.FC<TimelineProps> = ({
                     </div>
 
                     {/* Visual Media Film Strip Striping */}
-                    <div className="h-5 flex items-center justify-between px-1.5 bg-black/25 rounded border border-indigo-500/20 overflow-hidden">
+                    <div className="h-5 flex items-center justify-between px-1.5 bg-black/35 rounded border border-indigo-400/30 overflow-hidden">
                       <div className="flex items-center space-x-1.5">
-                        <Film className="w-3.5 h-3.5 text-indigo-300/70 shrink-0" />
-                        <span className="text-[10px] font-mono text-indigo-200/80 font-medium truncate">
-                          Video Footage ({clip.speed !== 1.0 ? `${clip.speed}x` : 'Visual'})
+                        <Film className="w-3.5 h-3.5 text-indigo-300/80 shrink-0" />
+                        <span className="text-[10px] font-mono text-indigo-200/90 font-semibold truncate">
+                          Visual Footage ({clip.speed !== 1.0 ? `${clip.speed}x` : '1.0x'})
                         </span>
                       </div>
-                      <div className="flex items-center space-x-0.5 opacity-40 shrink-0">
+                      <div className="flex items-center space-x-0.5 opacity-50 shrink-0">
                         {Array.from({ length: Math.min(8, Math.floor(width / 24)) }).map((_, spIdx) => (
-                          <div key={spIdx} className="w-1 h-3 bg-indigo-200/40 rounded-xs" />
+                          <div key={spIdx} className="w-1 h-3 bg-indigo-300 rounded-xs" />
                         ))}
                       </div>
                     </div>
@@ -896,7 +982,7 @@ export const Timeline: React.FC<TimelineProps> = ({
                           {clip.zoomScale.toFixed(2)}x Zoom
                         </span>
                       ) : (
-                        <span className="opacity-50">#{idx + 1}</span>
+                        <span className="opacity-60 font-semibold">#{idx + 1}</span>
                       )}
                       {isSelected && (
                         <span className="bg-rose-500 text-white font-bold px-1 rounded shadow-sm text-[8px] uppercase">
@@ -910,19 +996,47 @@ export const Timeline: React.FC<TimelineProps> = ({
             })}
           </div>
 
-          {/* TRACK 3: Extracted Main Audio Track */}
+          {/* TRACK 3: Extracted Main Audio Track (Exact Waveform Slicing & Sound Intensity) */}
           <div className="h-16 border-b border-slate-800/60 relative flex items-center bg-[#080d16]/70">
-            <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-sky-400 uppercase tracking-wider">
+            <div className="sticky left-0 w-28 z-10 bg-[#131926]/95 border-r border-slate-800 px-2 py-1 flex items-center space-x-1 text-[10px] font-bold text-sky-400 uppercase tracking-wider shrink-0">
               <Volume2 className="w-3 h-3 text-sky-400" />
               <span>Main Audio</span>
             </div>
 
+            {/* Inactive region past projectEndSec */}
+            {projectEndSec > 0 && (
+              <div
+                style={{
+                  left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px`,
+                  width: `${Math.max(150, timelineWidth - (TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond))}px`,
+                }}
+                className="absolute top-0 bottom-0 bg-[repeating-linear-gradient(45deg,#070a10,#070a10_10px,#0b0f19_10px,#0b0f19_20px)] opacity-60 pointer-events-none"
+              />
+            )}
+
             {clips.map((clip) => {
-              const left = clip.startTimelineTime * pixelsPerSecond;
-              const width = Math.max(60, clip.duration * pixelsPerSecond);
+              const left = TRACK_HEADER_WIDTH + clip.startTimelineTime * pixelsPerSecond;
+              const width = Math.max(20, clip.duration * pixelsPerSecond);
               const isClipSelected = selectedClipId === clip.id;
               const isMuted = clip.isMuted ?? false;
               const volumePercent = Math.round((clip.volume ?? 1.0) * 100);
+
+              // Extract accurate waveform segment for [inPoint, outPoint]
+              const numBars = Math.max(12, Math.floor(width / 3.2));
+              const segmentPeaks = extractClipWaveformSegment(
+                clip.audioBuffer,
+                clip.waveform,
+                clip.inPoint,
+                clip.outPoint,
+                clip.originalDuration,
+                numBars
+              );
+
+              // Check if playhead is currently inside this clip
+              const isPlayheadHere = currentTime >= clip.startTimelineTime && currentTime <= clip.startTimelineTime + clip.duration;
+              const playheadRelativeRatio = isPlayheadHere ? (currentTime - clip.startTimelineTime) / clip.duration : -1;
+              const activeBarIndex = isPlayheadHere ? Math.min(numBars - 1, Math.floor(playheadRelativeRatio * numBars)) : -1;
+              const currentSampleIntensity = activeBarIndex >= 0 ? (segmentPeaks[activeBarIndex] ?? 0) : 0;
 
               return (
                 <div
@@ -934,18 +1048,41 @@ export const Timeline: React.FC<TimelineProps> = ({
                     if (setSelectedSfxId) setSelectedSfxId(null);
                   }}
                   style={{ left: `${left}px`, width: `${width}px` }}
-                  className={`group absolute h-13 rounded-lg border flex flex-col justify-between p-1 cursor-pointer transition-all duration-150 ${
+                  className={`group absolute h-13 rounded-lg border-2 flex flex-col justify-between p-1 cursor-pointer transition-all duration-150 ${
                     isClipSelected
                       ? 'bg-sky-600/30 border-sky-400 text-white ring-2 ring-sky-400/80 shadow-lg shadow-sky-500/30 z-10'
-                      : 'bg-sky-950/70 border-sky-800/60 hover:border-sky-600 hover:bg-sky-900/60 text-sky-200'
-                  } ${isMuted ? 'opacity-50 grayscale' : ''}`}
-                  title={`Extracted Sound: ${clip.name} (Volume: ${volumePercent}%)`}
+                      : 'bg-sky-950/80 border-sky-600/80 hover:border-sky-400 hover:bg-sky-900/70 text-sky-200'
+                  } ${isMuted ? 'opacity-50 grayscale' : ''} border-l-4 border-l-sky-400 border-r-4 border-r-sky-400`}
+                  title={`Extracted Sound: ${clip.name} (IN: ${clip.inPoint.toFixed(1)}s, OUT: ${clip.outPoint.toFixed(1)}s, Volume: ${volumePercent}%)`}
                 >
-                  {/* Audio Card Header: Name + Inline Volume Controls */}
+                  {/* Live Sound Intensity Playhead Ticker Badge */}
+                  {isPlayheadHere && (
+                    <div
+                      style={{ left: `${Math.min(85, Math.max(2, playheadRelativeRatio * 100))}%` }}
+                      className="absolute -top-3.5 z-30 pointer-events-none transform -translate-x-1/2"
+                    >
+                      {currentSampleIntensity > 0.08 ? (
+                        <div className="bg-emerald-500 text-slate-950 font-mono font-black text-[8px] px-1.5 py-0.2 rounded-full shadow-lg shadow-emerald-500/60 flex items-center space-x-0.5 animate-pulse">
+                          <span>🔊</span>
+                          <span>SOUND: {Math.round(currentSampleIntensity * 100)}%</span>
+                        </div>
+                      ) : (
+                        <div className="bg-slate-800 text-slate-400 font-mono font-bold text-[8px] px-1.5 py-0.2 rounded-full border border-slate-700 flex items-center space-x-0.5 shadow-sm">
+                          <span>🔇</span>
+                          <span>SILENCE</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Audio Card Header: Name + Boundaries + Inline Volume Controls */}
                   <div className="flex items-center justify-between text-[10px] font-semibold truncate space-x-1">
                     <div className="flex items-center space-x-1 truncate">
                       <Volume2 className={`w-3 h-3 shrink-0 ${isMuted ? 'text-rose-400' : 'text-sky-400'}`} />
                       <span className="truncate text-[10px]">{clip.name}</span>
+                      <span className="text-[8px] font-mono px-1 py-0.2 bg-black/40 rounded text-sky-300 shrink-0">
+                        {clip.inPoint.toFixed(1)}s–{clip.outPoint.toFixed(1)}s
+                      </span>
                     </div>
 
                     {/* Inline Volume Controls: Mute, [-], %, [+] */}
@@ -1003,30 +1140,36 @@ export const Timeline: React.FC<TimelineProps> = ({
                     </div>
                   </div>
 
-                  {/* Full High-Resolution Waveform Visualization */}
-                  <div className="h-5 flex items-end space-x-0.5 px-0.5">
-                    {clip.waveform && clip.waveform.length > 0 ? (
-                      clip.waveform.slice(0, Math.floor(width / 3.5)).map((peak, pIdx) => (
+                  {/* Real Sound Intensity Waveform (Low Flat Line for Silence, High Spikes for Voice) */}
+                  <div className="h-5 flex items-end space-x-0.5 px-0.5 relative">
+                    {segmentPeaks.map((peak, pIdx) => {
+                      const isSilence = peak <= 0.03;
+                      const isTickingNow = isPlayheadHere && pIdx === activeBarIndex;
+                      const isPlayed = isPlayheadHere && pIdx < activeBarIndex;
+
+                      return (
                         <div
                           key={pIdx}
                           style={{
-                            height: `${Math.max(
-                              12,
-                              Math.min(100, peak * (isMuted ? 15 : (clip.volume ?? 1.0) * 100))
-                            )}%`,
+                            height: isSilence
+                              ? '2px'
+                              : `${Math.max(4, Math.round(peak * (isMuted ? 15 : (clip.volume ?? 1.0) * 100)))}%`,
                           }}
-                          className={`w-1 rounded-t-xs transition-all ${
-                            isMuted
-                              ? 'bg-slate-500/40'
-                              : (clip.volume ?? 1.0) > 1.2
-                              ? 'bg-amber-400/90'
-                              : 'bg-sky-400/90'
+                          className={`w-1 rounded-t-xs transition-all duration-75 ${
+                            isTickingNow
+                              ? 'bg-white shadow-[0_0_8px_white] scale-y-125 z-10 ring-1 ring-white'
+                              : isSilence
+                              ? 'bg-sky-800/40'
+                              : peak > 0.65
+                              ? 'bg-amber-400 shadow-[0_0_3px_rgba(251,191,36,0.6)]'
+                              : isPlayed
+                              ? 'bg-sky-400'
+                              : 'bg-sky-500/60'
                           }`}
+                          title={`Time: ${(clip.inPoint + (pIdx / numBars) * clip.duration).toFixed(2)}s | Intensity: ${Math.round(peak * 100)}%`}
                         />
-                      ))
-                    ) : (
-                      <div className="text-[8px] text-sky-400/60 font-mono italic">Dialogue audio waveform</div>
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -1035,7 +1178,7 @@ export const Timeline: React.FC<TimelineProps> = ({
 
           {/* TRACK 4: Dedicated SFX Audio Track */}
           <div className="h-14 border-b border-slate-800/60 relative flex items-center bg-[#09111b]/50">
-            <div className="sticky left-0 w-24 z-10 bg-[#131926]/90 border-r border-slate-800 px-2 py-1 flex items-center justify-between text-[10px] font-bold text-emerald-400 uppercase tracking-wider">
+            <div className="sticky left-0 w-28 z-10 bg-[#131926]/95 border-r border-slate-800 px-2 py-1 flex items-center justify-between text-[10px] font-bold text-emerald-400 uppercase tracking-wider shrink-0">
               <div className="flex items-center space-x-1">
                 <Music className="w-3 h-3 text-emerald-400" />
                 <span>SFX</span>
@@ -1052,9 +1195,20 @@ export const Timeline: React.FC<TimelineProps> = ({
               </button>
             </div>
 
+            {/* Inactive region past projectEndSec */}
+            {projectEndSec > 0 && (
+              <div
+                style={{
+                  left: `${TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond}px`,
+                  width: `${Math.max(150, timelineWidth - (TRACK_HEADER_WIDTH + projectEndSec * pixelsPerSecond))}px`,
+                }}
+                className="absolute top-0 bottom-0 bg-[repeating-linear-gradient(45deg,#070a10,#070a10_10px,#0b0f19_10px,#0b0f19_20px)] opacity-60 pointer-events-none"
+              />
+            )}
+
             {sfxTracks.map((sfx) => {
-              const left = sfx.startTimelineTime * pixelsPerSecond;
-              const width = Math.max(85, sfx.duration * pixelsPerSecond);
+              const left = TRACK_HEADER_WIDTH + sfx.startTimelineTime * pixelsPerSecond;
+              const width = Math.max(35, sfx.duration * pixelsPerSecond);
               const isActiveSfx = currentTime >= sfx.startTimelineTime && currentTime <= sfx.startTimelineTime + sfx.duration;
               const isSfxSelected = selectedSfxId === sfx.id;
               const isMuted = sfx.isMuted ?? false;
@@ -1070,14 +1224,14 @@ export const Timeline: React.FC<TimelineProps> = ({
                     setSelectedOverlayId(null);
                   }}
                   style={{ left: `${left}px`, width: `${width}px` }}
-                  className={`absolute h-10 rounded-lg border flex items-center justify-between px-1.5 cursor-pointer transition-all duration-150 ${
+                  className={`absolute h-10 rounded-lg border-2 flex items-center justify-between px-1.5 cursor-pointer transition-all duration-150 ${
                     isActiveSfx
                       ? 'bg-emerald-600 border-white text-white ring-2 ring-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.9)] scale-[1.03] z-20'
                       : isSfxSelected
                       ? 'bg-emerald-800/90 border-white text-white ring-2 ring-emerald-500 shadow-md z-10'
                       : 'bg-emerald-950/80 border-emerald-700/60 hover:bg-emerald-900/90 text-emerald-200'
-                  } ${isMuted ? 'opacity-50 grayscale' : ''}`}
-                  title={`SFX: ${sfx.name} (${sfx.preset}) - Volume: ${volumePercent}%`}
+                  } ${isMuted ? 'opacity-50 grayscale' : ''} border-l-2 border-l-emerald-400 border-r-2 border-r-emerald-400`}
+                  title={`SFX: ${sfx.name} (${sfx.preset}) - Duration: ${sfx.duration.toFixed(1)}s - Volume: ${volumePercent}%`}
                 >
                   {/* SFX Label & Animated Sonic Visualizer when Active */}
                   <div className="flex items-center space-x-1.5 truncate mr-1">

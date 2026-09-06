@@ -17,6 +17,8 @@ export async function decodeAudioBuffer(blobOrBuffer: Blob | ArrayBuffer): Promi
 
 /**
  * Generates an array of normalized waveform peaks (0 to 1) for timeline UI display.
+ * Uses RMS and peak amplitude with a noise gate so silence drops to a flat baseline (~0.02)
+ * and voice/sound spikes proportionally up to 1.0.
  */
 export function generateWaveformPeaks(buffer: AudioBuffer, numPeaks: number = 100): number[] {
   const channelData = buffer.getChannelData(0);
@@ -25,14 +27,99 @@ export function generateWaveformPeaks(buffer: AudioBuffer, numPeaks: number = 10
 
   for (let i = 0; i < numPeaks; i++) {
     const start = i * step;
+    let sumSquares = 0;
     let max = 0;
-    for (let j = 0; j < step; j++) {
-      const val = Math.abs(channelData[start + j] || 0);
+    let count = 0;
+    for (let j = 0; j < step && start + j < channelData.length; j++) {
+      const sample = channelData[start + j] || 0;
+      const val = Math.abs(sample);
+      sumSquares += sample * sample;
       if (val > max) max = val;
+      count++;
     }
-    peaks.push(Math.min(1, max));
+    const rms = count > 0 ? Math.sqrt(sumSquares / count) : 0;
+    if (rms < 0.012 && max < 0.03) {
+      peaks.push(0.02); // Clean silence floor
+    } else {
+      const intensity = Math.min(1.0, Math.max(0.06, rms * 3.2 + max * 0.35));
+      peaks.push(intensity);
+    }
   }
   return peaks;
+}
+
+/**
+ * Extracts a normalized waveform segment (0 to 1) for a specific clip segment between inPoint and outPoint.
+ * Maps directly across the duration: silent intervals are at low baseline (2px), and spoken/sound
+ * intervals spike in intensity according to actual audio energy.
+ */
+export function extractClipWaveformSegment(
+  buffer?: AudioBuffer,
+  fallbackWaveform?: number[],
+  inPointSec: number = 0,
+  outPointSec: number = 0,
+  originalDuration: number = 1,
+  numBars: number = 60
+): number[] {
+  const bars = Math.max(8, numBars);
+
+  // Path A: Extract directly from PCM AudioBuffer if available
+  if (buffer && buffer.length > 0) {
+    const channelData = buffer.getChannelData(0);
+    const sampleRate = buffer.sampleRate;
+    const startSample = Math.max(0, Math.floor(inPointSec * sampleRate));
+    const endSample = Math.min(channelData.length, Math.floor(outPointSec * sampleRate));
+    const totalSamples = Math.max(1, endSample - startSample);
+    const step = Math.max(1, Math.floor(totalSamples / bars));
+
+    const result: number[] = [];
+    for (let i = 0; i < bars; i++) {
+      const windowStart = startSample + i * step;
+      let sumSquares = 0;
+      let peak = 0;
+      let count = 0;
+
+      for (let j = 0; j < step && windowStart + j < endSample; j++) {
+        const sample = channelData[windowStart + j];
+        const absVal = Math.abs(sample);
+        sumSquares += sample * sample;
+        if (absVal > peak) peak = absVal;
+        count++;
+      }
+
+      const rms = count > 0 ? Math.sqrt(sumSquares / count) : 0;
+      if (rms < 0.012 && peak < 0.03) {
+        result.push(0.02); // Flat baseline for silence
+      } else {
+        const intensity = Math.min(1.0, Math.max(0.08, rms * 3.5 + peak * 0.3));
+        result.push(intensity);
+      }
+    }
+    return result;
+  }
+
+  // Path B: Extract from pre-computed fallbackWaveform
+  if (fallbackWaveform && fallbackWaveform.length > 0) {
+    const total = fallbackWaveform.length;
+    const safeDuration = Math.max(0.1, originalDuration);
+    const startRatio = Math.max(0, Math.min(1, inPointSec / safeDuration));
+    const endRatio = Math.max(startRatio, Math.min(1, outPointSec / safeDuration));
+
+    const startIdx = Math.floor(startRatio * total);
+    const endIdx = Math.ceil(endRatio * total);
+    const slice = fallbackWaveform.slice(startIdx, Math.max(startIdx + 1, endIdx));
+
+    const result: number[] = [];
+    for (let i = 0; i < bars; i++) {
+      const sliceIdx = Math.min(slice.length - 1, Math.floor((i / bars) * slice.length));
+      const val = slice[sliceIdx] ?? 0.02;
+      result.push(val < 0.08 ? 0.02 : val);
+    }
+    return result;
+  }
+
+  // Path C: Flat silence baseline fallback
+  return Array.from({ length: bars }, () => 0.02);
 }
 
 /**

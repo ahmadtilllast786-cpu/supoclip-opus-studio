@@ -32,7 +32,7 @@ import { generateDemoVideoClip } from './core/video/demoMediaGenerator';
 import { SUPOCLIP_CAPTION_TEMPLATES } from './core/captions/supoClipTemplates';
 import { generateViralMoments, generateAdaptiveTranscript } from './core/ai/viralityScorer';
 import { autoTranscribeVideoAudio } from './core/ai/captionTranscriber';
-import { decodeAudioBuffer } from './core/audio/audioAnalyzer';
+import { decodeAudioBuffer, generateWaveformPeaks } from './core/audio/audioAnalyzer';
 
 export function App() {
   const [clips, setClips] = useState<VideoClip[]>([]);
@@ -117,6 +117,7 @@ export function App() {
             try {
               audioBuf = await decodeAudioBuffer(demoClip.blob);
               demoClip.audioBuffer = audioBuf;
+              demoClip.waveform = generateWaveformPeaks(audioBuf, Math.max(120, Math.floor(demoClip.duration * 50)));
             } catch (e) {
               console.warn('Demo audio decode error:', e);
             }

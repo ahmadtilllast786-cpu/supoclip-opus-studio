@@ -46,10 +46,10 @@ export const AssetBin: React.FC<AssetBinProps> = ({
         let decodedBuffer: AudioBuffer | undefined;
         try {
           decodedBuffer = await decodeAudioBuffer(file);
-          waveform = generateWaveformPeaks(decodedBuffer, 60);
+          waveform = generateWaveformPeaks(decodedBuffer, Math.max(100, Math.floor(duration * 50)));
         } catch {
-          // Fallback waveform if no audio track
-          waveform = Array.from({ length: 40 }, () => 0.2 + Math.random() * 0.6);
+          // Clean flat baseline if no audio track
+          waveform = Array.from({ length: 80 }, () => 0.02);
         }
 
         const newClip: VideoClip = {

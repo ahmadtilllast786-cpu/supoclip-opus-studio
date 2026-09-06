@@ -1,4 +1,5 @@
 import { VideoClip } from '../../types/timeline';
+import { generateWaveformPeaks } from '../audio/audioAnalyzer';
 
 /**
  * Procedurally generates a colorful, high-energy sample video clip with real audio
@@ -31,13 +32,25 @@ export async function generateDemoVideoClip(
   osc.connect(gain);
   gain.connect(dest);
 
-  // Rhythmic beat simulation with silences
-  for (let t = 0; t < durationSec; t += 0.8) {
-    gain.gain.setValueAtTime(0.01, audioCtx.currentTime + t);
-    gain.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + t + 0.05);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + t + 0.4);
-    // Deliberate silence gap between 0.4 and 0.8
-  }
+  // Rhythmic dialogue bursts with distinct silence gaps
+  const speechIntervals = [
+    { start: 0.2, end: 0.8 },
+    { start: 1.15, end: 1.8 },
+    { start: 2.15, end: 2.9 },
+    { start: 3.25, end: 4.1 },
+    { start: 4.4, end: 5.35 },
+  ];
+
+  gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+  speechIntervals.forEach(({ start, end }) => {
+    if (start < durationSec) {
+      const safeEnd = Math.min(durationSec, end);
+      gain.gain.setValueAtTime(0.0001, audioCtx.currentTime + start);
+      gain.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + start + 0.04);
+      gain.gain.setValueAtTime(0.45, audioCtx.currentTime + safeEnd - 0.04);
+      gain.gain.linearRampToValueAtTime(0.0001, audioCtx.currentTime + safeEnd);
+    }
+  });
 
   osc.start(audioCtx.currentTime);
   osc.stop(audioCtx.currentTime + durationSec);
@@ -159,12 +172,6 @@ export async function generateDemoVideoClip(
   const videoBlob = await clipBlobPromise;
   const sourceUrl = URL.createObjectURL(videoBlob);
 
-  // Generate synthetic peaks
-  const waveform: number[] = [];
-  for (let i = 0; i < 40; i++) {
-    waveform.push(i % 3 === 0 ? 0.05 : 0.4 + Math.random() * 0.5);
-  }
-
   // Generate AudioBuffer for instant auto-transcription & voice analysis
   let audioBuffer: AudioBuffer | undefined;
   try {
@@ -175,6 +182,11 @@ export async function generateDemoVideoClip(
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     audioBuffer = ctx.createBuffer(1, Math.max(1, Math.round(durationSec * 44100)), 44100);
   }
+
+  // Extract REAL waveform peaks from the audio buffer (high resolution, e.g. 50 peaks per sec)
+  const waveform: number[] = audioBuffer
+    ? generateWaveformPeaks(audioBuffer, Math.max(120, Math.floor(durationSec * 50)))
+    : Array.from({ length: 80 }, () => 0.02);
 
   return {
     id: `clip-demo-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
