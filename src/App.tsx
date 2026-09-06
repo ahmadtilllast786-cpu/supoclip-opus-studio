@@ -36,13 +36,18 @@ import { SUPOCLIP_CAPTION_TEMPLATES } from './core/captions/supoClipTemplates';
 import { generateViralMoments, generateAdaptiveTranscript } from './core/ai/viralityScorer';
 import { autoTranscribeVideoAudio, transcribeContinuousAudio } from './core/ai/captionTranscriber';
 import { decodeAudioBuffer, generateWaveformPeaks } from './core/audio/audioAnalyzer';
-import { groupWordsIntoCaptionChunks } from './core/captions/captionHandler';
+import {
+  groupWordsIntoCaptionChunks,
+  createCompoundCaptionTrack,
+  syncCompoundCaptionsWithWords,
+} from './core/captions/captionHandler';
 
 export function App() {
   const [clips, setClips] = useState<VideoClip[]>([]);
   const [overlays, setOverlays] = useState<StickerOverlay[]>([]);
   const [zoomKeyframes, setZoomKeyframes] = useState<DynamicZoomKeyframe[]>([]);
   const [sfxTracks, setSfxTracks] = useState<SfxTrackItem[]>([]);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
 
   // SupoClip Captions, Hook Title & Virality State
   const [captionTemplate, setCaptionTemplate] = useState<CaptionTemplate>(
@@ -151,10 +156,11 @@ export function App() {
             if (demoResult.confidence) {
               setDetectedConfidence(demoResult.confidence);
             }
-            const chunks = groupWordsIntoCaptionChunks(demoResult.words, {
+            const compoundCaptions = createCompoundCaptionTrack(demoResult.words, {
               detectedLanguage: demoResult.detectedLanguage || 'auto',
+              id: 'caption-master-1',
             });
-            setCaptions(chunks);
+            setCaptions(compoundCaptions);
             setShowCaptions(true);
             const moments = generateViralMoments([demoClip], 30, demoResult.words);
             setViralMoments(moments);
@@ -245,10 +251,11 @@ export function App() {
             ? [...prevWords, ...adjustedWords].sort((a, b) => a.start - b.start)
             : adjustedWords;
 
-          const chunks = groupWordsIntoCaptionChunks(combined, {
+          const compound = createCompoundCaptionTrack(combined, {
             detectedLanguage: result.detectedLanguage || detectedLanguage || 'auto',
+            id: isReplacingDemo ? 'caption-master-1' : `caption-${Date.now()}`,
           });
-          setCaptions(chunks);
+          setCaptions(compound);
 
           setClips((currentClips) => {
             const moments = generateViralMoments(currentClips, 30, combined);
@@ -262,8 +269,9 @@ export function App() {
           return combined;
         });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Auto-transcribe on clip upload error:', err);
+      setTranscriptionError(err?.message || 'Automatic Speech-to-Text failed to transcribe the clip audio.');
     }
   }, []);
 
@@ -335,8 +343,8 @@ export function App() {
     setActiveMomentId(moment.id);
     setHookTitle(moment.scores.hookTitle);
     setWords(moment.words);
-    const chunks = groupWordsIntoCaptionChunks(moment.words, { detectedLanguage });
-    setCaptions(chunks);
+    const compound = createCompoundCaptionTrack(moment.words, { detectedLanguage });
+    setCaptions(compound);
     setCurrentTime(0);
   }, [detectedLanguage]);
 
@@ -377,6 +385,22 @@ export function App() {
         activeClipCount={clips.length}
         activeViralityScore={activeViralityScore}
       />
+
+      {/* Explicit STT Pipeline / Audio Extraction Error Notice */}
+      {transcriptionError && (
+        <div className="bg-rose-950/90 border-b border-rose-600/80 px-4 py-2 text-xs flex items-center justify-between text-rose-200 z-50 animate-in fade-in slide-in-from-top">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-rose-400">⚠️ STT Pipeline Notice:</span>
+            <span>{transcriptionError}</span>
+          </div>
+          <button
+            onClick={() => setTranscriptionError(null)}
+            className="text-rose-300 hover:text-white px-2 py-0.5 rounded bg-rose-900/60 hover:bg-rose-800 border border-rose-700/60 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Center Work Area: Left Sidebar, Canvas Player, Right Property Inspector */}
       <div className="flex-1 flex overflow-hidden">

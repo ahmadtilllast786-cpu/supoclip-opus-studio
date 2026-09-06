@@ -141,6 +141,8 @@ export interface CaptionTrackItem {
   words: TranscriptWord[];
   detectedLanguage?: string;
   isLocked?: boolean;
+  type?: 'compound-captions' | 'phrase';
+  templateOverride?: CaptionTemplateId;
 }
 
 export interface TranscriptWord {

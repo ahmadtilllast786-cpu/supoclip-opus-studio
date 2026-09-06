@@ -35,6 +35,8 @@ import {
 } from '../../core/captions/supoClipTemplates';
 import {
   groupWordsIntoCaptionChunks,
+  createCompoundCaptionTrack,
+  syncCompoundCaptionsWithWords,
 } from '../../core/captions/captionHandler';
 import { extractSequentialAudioTrack } from '../../core/audio/audioExtractor';
 import {
@@ -123,14 +125,16 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
       flag: '🌐',
     };
 
-  // Helper to keep both word-level list and timeline caption chunk cards perfectly in sync
+  // Helper to keep both word-level list and timeline compound caption track perfectly in sync
   const syncWordsAndCaptions = (newWords: TranscriptWord[], lang?: string) => {
     setWords(newWords);
     if (setCaptions) {
-      const chunks = groupWordsIntoCaptionChunks(newWords, {
-        detectedLanguage: lang || effectiveLangCode,
-      });
-      setCaptions(chunks);
+      const compoundCaptions = syncCompoundCaptionsWithWords(
+        captions || [],
+        newWords,
+        lang || effectiveLangCode
+      );
+      setCaptions(compoundCaptions);
     }
   };
 

@@ -132,3 +132,131 @@ export function flattenCaptionsToWords(captions: CaptionTrackItem[]): Transcript
   });
   return allWords.sort((a, b) => a.start - b.start);
 }
+
+/**
+ * Creates ONE unified continuous Compound Caption Track item spanning
+ * from the first word to the last word, eliminating fragmented track cards.
+ */
+export function createCompoundCaptionTrack(
+  words: TranscriptWord[],
+  options: {
+    detectedLanguage?: string;
+    id?: string;
+  } = {}
+): CaptionTrackItem[] {
+  if (!words || words.length === 0) return [];
+
+  const sortedWords = [...words].sort((a, b) => a.start - b.start);
+  const startTime = sortedWords[0].start;
+  const endTime = Math.max(startTime + 0.5, sortedWords[sortedWords.length - 1].end);
+  const text = sortedWords.map((w) => w.word).join(' ');
+  const detectedLanguage = options.detectedLanguage || 'auto';
+
+  return [
+    {
+      id: options.id || 'caption-master-1',
+      text,
+      startTime: Number(startTime.toFixed(2)),
+      endTime: Number(endTime.toFixed(2)),
+      words: sortedWords,
+      detectedLanguage,
+      type: 'compound-captions',
+    },
+  ];
+}
+
+/**
+ * Splits a Compound Caption item into two independent blocks at splitSec.
+ * Block A: startTime to splitSec
+ * Block B: splitSec to endTime
+ */
+export function splitCompoundCaptionItem(
+  item: CaptionTrackItem,
+  splitSec: number
+): [CaptionTrackItem, CaptionTrackItem] | null {
+  const normSplit = Number(splitSec.toFixed(2));
+  if (normSplit <= item.startTime + 0.1 || normSplit >= item.endTime - 0.1) {
+    return null;
+  }
+
+  const wordsBefore = item.words.filter((w) => (w.start + w.end) / 2 < normSplit);
+  const wordsAfter = item.words.filter((w) => (w.start + w.end) / 2 >= normSplit);
+
+  const blockA: CaptionTrackItem = {
+    ...item,
+    id: `${item.id}-a-${Date.now()}`,
+    startTime: item.startTime,
+    endTime: normSplit,
+    words: wordsBefore,
+    text: wordsBefore.map((w) => w.word).join(' '),
+    type: 'compound-captions',
+  };
+
+  const blockB: CaptionTrackItem = {
+    ...item,
+    id: `${item.id}-b-${Date.now()}`,
+    startTime: normSplit,
+    endTime: item.endTime,
+    words: wordsAfter,
+    text: wordsAfter.map((w) => w.word).join(' '),
+    type: 'compound-captions',
+  };
+
+  return [blockA, blockB];
+}
+
+/**
+ * Cleanly shifts all word timestamps inside a compound caption block when dragged along the timeline.
+ */
+export function shiftCaptionBlockTime(
+  item: CaptionTrackItem,
+  deltaSec: number
+): CaptionTrackItem {
+  const normDelta = Number(deltaSec.toFixed(2));
+  const newStart = Math.max(0, Number((item.startTime + normDelta).toFixed(2)));
+  const shift = newStart - item.startTime;
+  const newEnd = Number((item.endTime + shift).toFixed(2));
+
+  const updatedWords = item.words.map((w) => ({
+    ...w,
+    start: Number((w.start + shift).toFixed(2)),
+    end: Number((w.end + shift).toFixed(2)),
+  }));
+
+  return {
+    ...item,
+    startTime: newStart,
+    endTime: newEnd,
+    words: updatedWords,
+  };
+}
+
+/**
+ * Synchronizes compound caption containers with updated words while preserving user splits.
+ */
+export function syncCompoundCaptionsWithWords(
+  existingCaptions: CaptionTrackItem[],
+  words: TranscriptWord[],
+  detectedLanguage?: string
+): CaptionTrackItem[] {
+  if (!words || words.length === 0) return [];
+  if (!existingCaptions || existingCaptions.length <= 1) {
+    return createCompoundCaptionTrack(words, {
+      detectedLanguage,
+      id: existingCaptions[0]?.id || 'caption-master-1',
+    });
+  }
+
+  return existingCaptions.map((cap) => {
+    const blockWords = words.filter(
+      (w) => (w.start + w.end) / 2 >= cap.startTime && (w.start + w.end) / 2 < cap.endTime
+    );
+    return {
+      ...cap,
+      words: blockWords,
+      text: blockWords.map((w) => w.word).join(' '),
+      detectedLanguage: detectedLanguage || cap.detectedLanguage || 'auto',
+      type: 'compound-captions',
+    };
+  });
+}

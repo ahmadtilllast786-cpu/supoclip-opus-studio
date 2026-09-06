@@ -576,10 +576,24 @@ export function normalizeLanguageCode(lang?: string): string {
   if (!lang) return 'auto';
   const clean = lang.trim().toLowerCase();
   const MAP: Record<string, string> = {
-    spanish: 'es', español: 'es', french: 'fr', français: 'fr', german: 'de', deutsch: 'de',
-    italian: 'it', italiano: 'it', portuguese: 'pt', português: 'pt', japanese: 'ja',
-    chinese: 'zh', hindi: 'hi', arabic: 'ar', korean: 'ko', russian: 'ru', turkish: 'tr',
-    dutch: 'nl', english: 'en',
+    spanish: 'es', español: 'es', es: 'es',
+    french: 'fr', français: 'fr', fr: 'fr',
+    german: 'de', deutsch: 'de', de: 'de',
+    italian: 'it', italiano: 'it', it: 'it',
+    portuguese: 'pt', português: 'pt', pt: 'pt',
+    japanese: 'ja', ja: 'ja',
+    chinese: 'zh', mandarin: 'zh', zh: 'zh',
+    hindi: 'hi', hi: 'hi',
+    urdu: 'ur', ur: 'ur',
+    arabic: 'ar', ar: 'ar',
+    korean: 'ko', ko: 'ko',
+    russian: 'ru', ru: 'ru',
+    turkish: 'tr', tr: 'tr',
+    dutch: 'nl', nl: 'nl',
+    english: 'en', en: 'en',
+    punjabi: 'pa', pa: 'pa',
+    bengali: 'bn', bn: 'bn',
+    indonesian: 'id', id: 'id',
   };
   return MAP[clean] || clean;
 }

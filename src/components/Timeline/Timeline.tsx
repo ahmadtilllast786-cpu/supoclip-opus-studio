@@ -34,7 +34,13 @@ import {
   DiagnosticSettings,
 } from '../../types/timeline';
 import { extractClipWaveformSegment } from '../../core/audio/audioAnalyzer';
-import { recalculateChunkWordTimings, flattenCaptionsToWords } from '../../core/captions/captionHandler';
+import {
+  recalculateChunkWordTimings,
+  flattenCaptionsToWords,
+  splitCompoundCaptionItem,
+  shiftCaptionBlockTime,
+  createCompoundCaptionTrack,
+} from '../../core/captions/captionHandler';
 import { TimelineToolbar, TimelineToolMode } from './TimelineToolbar';
 import { TimelineMinimap } from './TimelineMinimap';
 import { TimelineRuler } from './TimelineRuler';
@@ -129,6 +135,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Razor Blade Hover Line
   const [razorHoverSec, setRazorHoverSec] = useState<number | null>(null);
   const [razorHoverClipId, setRazorHoverClipId] = useState<string | null>(null);
+  const [razorHoverCaptionId, setRazorHoverCaptionId] = useState<string | null>(null);
 
   // Track Lock States
   const [isCaptionLocked, setIsCaptionLocked] = useState(false);
@@ -317,19 +324,91 @@ export const Timeline: React.FC<TimelineProps> = ({
     [clips, isVideoLocked, setClips, setSelectedClipId]
   );
 
-  // Split at current Playhead position
-  const handleSplitAtPlayhead = useCallback(() => {
-    if (isVideoLocked) return;
-    const clipAtPlayhead = clips.find(
-      (c) =>
-        currentTime >= c.startTimelineTime &&
-        currentTime <= c.startTimelineTime + c.duration
-    );
-    if (!clipAtPlayhead) return;
+  // Split Compound Caption Block at specific timeline timestamp
+  const handleSplitCaptionAt = useCallback(
+    (captionId: string, splitSec: number) => {
+      if (isCaptionLocked || !setCaptions) return;
+      const targetCaption = (captions || []).find((c) => c.id === captionId);
+      if (!targetCaption) return;
 
-    const offset = currentTime - clipAtPlayhead.startTimelineTime;
-    handleSplitClipAt(clipAtPlayhead.id, offset);
-  }, [clips, currentTime, isVideoLocked, handleSplitClipAt]);
+      const splitResult = splitCompoundCaptionItem(targetCaption, splitSec);
+      if (!splitResult) return;
+
+      const [blockA, blockB] = splitResult;
+      setCaptions((prev) => {
+        const idx = prev.findIndex((c) => c.id === captionId);
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        updated.splice(idx, 1, blockA, blockB);
+        if (setWords) {
+          setWords(flattenCaptionsToWords(updated));
+        }
+        return updated;
+      });
+
+      if (setSelectedCaptionId) {
+        setSelectedCaptionId(blockA.id);
+      }
+    },
+    [captions, isCaptionLocked, setCaptions, setWords, setSelectedCaptionId]
+  );
+
+  // Split at current Playhead position (Priority: Selected Item -> Item intersecting Playhead)
+  const handleSplitAtPlayhead = useCallback(() => {
+    // 1. If a caption is currently selected, split it at currentTime
+    if (selectedCaptionId && !isCaptionLocked && setCaptions) {
+      const cap = (captions || []).find((c) => c.id === selectedCaptionId);
+      if (cap && currentTime > cap.startTime + 0.12 && currentTime < cap.endTime - 0.12) {
+        handleSplitCaptionAt(cap.id, currentTime);
+        return;
+      }
+    }
+
+    // 2. If a video clip is currently selected, split it at currentTime
+    if (selectedClipId && !isVideoLocked) {
+      const clip = clips.find((c) => c.id === selectedClipId);
+      if (
+        clip &&
+        currentTime > clip.startTimelineTime + 0.15 &&
+        currentTime < clip.startTimelineTime + clip.duration - 0.15
+      ) {
+        handleSplitClipAt(clip.id, currentTime - clip.startTimelineTime);
+        return;
+      }
+    }
+
+    // 3. Otherwise check what intersects the playhead: prefer Caption if present, then Clip
+    const captionAtPlayhead = (captions || []).find(
+      (c) => currentTime > c.startTime + 0.12 && currentTime < c.endTime - 0.12
+    );
+    if (captionAtPlayhead && !isCaptionLocked && setCaptions) {
+      handleSplitCaptionAt(captionAtPlayhead.id, currentTime);
+      return;
+    }
+
+    if (!isVideoLocked) {
+      const clipAtPlayhead = clips.find(
+        (c) =>
+          currentTime >= c.startTimelineTime &&
+          currentTime <= c.startTimelineTime + c.duration
+      );
+      if (clipAtPlayhead) {
+        const offset = currentTime - clipAtPlayhead.startTimelineTime;
+        handleSplitClipAt(clipAtPlayhead.id, offset);
+      }
+    }
+  }, [
+    selectedCaptionId,
+    selectedClipId,
+    captions,
+    clips,
+    currentTime,
+    isCaptionLocked,
+    isVideoLocked,
+    setCaptions,
+    handleSplitCaptionAt,
+    handleSplitClipAt,
+  ]);
 
   // Delete currently selected item
   const handleDeleteSelected = useCallback(() => {
@@ -873,11 +952,10 @@ export const Timeline: React.FC<TimelineProps> = ({
             prev.map((s) => (s.id === id ? { ...s, startTimelineTime: newStart } : s))
           );
         } else if (type === 'caption' && setCaptions) {
-          const chunkDur = duration;
-          const newEnd = newStart + chunkDur;
+          const deltaFromInitial = newStart - initialStartTime;
           setCaptions((prev) =>
             prev.map((c) =>
-              c.id === id ? recalculateChunkWordTimings(c, newStart, newEnd) : c
+              c.id === id ? shiftCaptionBlockTime(c, deltaFromInitial) : c
             )
           );
         }
@@ -1392,7 +1470,12 @@ export const Timeline: React.FC<TimelineProps> = ({
               {(captions || []).map((cap) => {
                 const isSelected = selectedCaptionId === cap.id;
                 const leftPx = cap.startTime * pixelsPerSecond;
-                const widthPx = Math.max(45, (cap.endTime - cap.startTime) * pixelsPerSecond);
+                const widthPx = Math.max(50, (cap.endTime - cap.startTime) * pixelsPerSecond);
+                const blockDuration = Math.max(0.1, cap.endTime - cap.startTime);
+                const wordsList = cap.words || [];
+                const langTag = (cap.detectedLanguage && cap.detectedLanguage !== 'auto'
+                  ? cap.detectedLanguage
+                  : detectedLanguage || 'auto').toUpperCase();
 
                 const isTriggeredNow =
                   currentTime >= cap.startTime && currentTime <= cap.endTime;
@@ -1401,18 +1484,42 @@ export const Timeline: React.FC<TimelineProps> = ({
                   <div
                     key={cap.id}
                     data-no-scrub="true"
-                    onPointerDown={(e) =>
-                      handleItemDragStart(
-                        e,
-                        cap.id,
-                        'caption',
-                        cap.startTime,
-                        cap.endTime - cap.startTime
-                      )
-                    }
+                    onPointerDown={(e) => {
+                      if (toolMode === 'select') {
+                        handleItemDragStart(
+                          e,
+                          cap.id,
+                          'caption',
+                          cap.startTime,
+                          cap.endTime - cap.startTime
+                        );
+                      }
+                    }}
+                    onMouseMove={(e) => {
+                      if (toolMode === 'razor') {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const clickOffsetPx = e.clientX - rect.left;
+                        const hoverSec = cap.startTime + clickOffsetPx / pixelsPerSecond;
+                        setRazorHoverCaptionId(cap.id);
+                        setRazorHoverSec(hoverSec);
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      if (razorHoverCaptionId === cap.id) {
+                        setRazorHoverCaptionId(null);
+                        setRazorHoverSec(null);
+                      }
+                    }}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (hasMovedRef.current) return;
+                      if (toolMode === 'razor') {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const clickOffsetPx = e.clientX - rect.left;
+                        const clickSec = cap.startTime + clickOffsetPx / pixelsPerSecond;
+                        handleSplitCaptionAt(cap.id, clickSec);
+                        return;
+                      }
                       setCurrentTime(cap.startTime);
                       if (toolMode === 'select' && !isCaptionLocked && setSelectedCaptionId) {
                         setSelectedCaptionId(cap.id);
@@ -1425,42 +1532,111 @@ export const Timeline: React.FC<TimelineProps> = ({
                       left: `${leftPx}px`,
                       width: `${widthPx}px`,
                     }}
-                    className={`absolute h-10 rounded-lg flex items-center px-2 border-2 transition-all shadow-md select-none group ${
-                      toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                    className={`absolute h-12 rounded-lg flex flex-col justify-between border-2 transition-all shadow-md select-none group overflow-hidden ${
+                      toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-crosshair'
                     } ${
                       isTriggeredNow
-                        ? 'bg-amber-900/90 border-amber-300 ring-2 ring-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.8)] scale-[1.02] z-20'
+                        ? 'bg-gradient-to-r from-amber-950/95 via-amber-900/80 to-amber-950/95 border-amber-300 ring-2 ring-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.6)] z-20'
                         : isSelected
-                        ? 'bg-amber-950 border-amber-400 ring-2 ring-amber-400/50 shadow-amber-950/80 z-20'
-                        : 'bg-amber-950/70 border-amber-700/60 hover:border-amber-500 z-10'
+                        ? 'bg-gradient-to-r from-amber-950/95 via-amber-900/70 to-amber-950/95 border-amber-400 ring-2 ring-amber-400/50 shadow-amber-950/80 z-20'
+                        : 'bg-gradient-to-r from-amber-950/80 via-amber-900/50 to-slate-950/90 border-amber-700/60 hover:border-amber-500 z-10'
                     }`}
                   >
+                    {/* Header: Title, Language Badge, Word Count, Quick Split */}
+                    <div className="flex items-center justify-between px-2 pt-0.5 border-b border-amber-800/30 z-10">
+                      <div className="flex items-center gap-1.5 overflow-hidden">
+                        <Subtitles className="w-3 h-3 text-amber-400 shrink-0" />
+                        <span className="text-[10px] font-bold text-amber-100 truncate">
+                          Compound Captions
+                        </span>
+                        {langTag && langTag !== 'AUTO' && (
+                          <span className="px-1 py-0.2 bg-amber-500/20 text-amber-300 font-mono text-[8px] font-bold rounded border border-amber-400/30">
+                            {langTag}
+                          </span>
+                        )}
+                        <span className="text-[9px] font-mono text-amber-300/70 shrink-0">
+                          ({wordsList.length} words)
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {/* Quick Split at Playhead button on hover */}
+                        {!isCaptionLocked && currentTime > cap.startTime + 0.15 && currentTime < cap.endTime - 0.15 && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSplitCaptionAt(cap.id, currentTime);
+                            }}
+                            title="Split caption at playhead (S)"
+                            className="hidden group-hover:flex px-1.5 py-0.2 bg-amber-600 hover:bg-amber-500 text-white rounded text-[9px] font-bold items-center gap-0.5 shadow transition-all scale-95 hover:scale-100"
+                          >
+                            <Scissors className="w-2.5 h-2.5" />
+                            <span>Split</span>
+                          </button>
+                        )}
+                        <span className="text-[9px] font-mono text-amber-300/80">
+                          {blockDuration.toFixed(1)}s
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Word Cadence & Spoken Word Highlight Strip */}
+                    <div className="relative flex-1 px-1 py-0.5 overflow-hidden flex items-center">
+                      {wordsList.map((w, wIdx) => {
+                        const relStart = Math.max(0, Math.min(100, ((w.start - cap.startTime) / blockDuration) * 100));
+                        const relWidth = Math.max(0.6, Math.min(100 - relStart, ((w.end - w.start) / blockDuration) * 100));
+                        const isWordSpokenNow = currentTime >= w.start && currentTime <= w.end;
+
+                        return (
+                          <div
+                            key={`w-${wIdx}-${w.start}`}
+                            style={{
+                              left: `${relStart}%`,
+                              width: `${relWidth}%`,
+                            }}
+                            title={`${w.word} (${w.start.toFixed(2)}s - ${w.end.toFixed(2)}s)`}
+                            className={`absolute h-4 rounded-sm px-0.5 flex items-center justify-center transition-all ${
+                              isWordSpokenNow
+                                ? 'bg-amber-400 text-slate-950 font-bold shadow-[0_0_8px_rgba(251,191,36,0.9)] z-20 scale-105'
+                                : 'bg-amber-950/40 hover:bg-amber-800/60 border border-amber-700/30 text-amber-200/80'
+                            }`}
+                          >
+                            <span className="text-[8px] font-mono truncate select-none leading-none">
+                              {w.word}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Razor Scissor Cut Guide Line */}
+                    {toolMode === 'razor' && razorHoverCaptionId === cap.id && razorHoverSec !== null && (
+                      <div
+                        style={{ left: `${(razorHoverSec - cap.startTime) * pixelsPerSecond}px` }}
+                        className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-30 pointer-events-none shadow-[0_0_8px_rgba(251,191,36,1)] flex items-center justify-center"
+                      >
+                        <Scissors className="w-3.5 h-3.5 text-amber-300 -translate-y-4 fill-amber-500 animate-bounce" />
+                      </div>
+                    )}
+
                     {/* Left Trim Handle */}
                     {!isCaptionLocked && (
                       <div
                         data-trim-handle="true"
                         onPointerDown={(e) => handleCaptionTrimStart(e, cap.id, 'left')}
-                        title="Trim subtitle start"
+                        title="Trim compound caption start"
                         className="absolute left-0 top-0 bottom-0 w-2.5 bg-amber-500/30 hover:bg-amber-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-amber-500/60"
                       >
                         <div className="w-0.5 h-3 bg-white/80 rounded" />
                       </div>
                     )}
 
-                    <Subtitles className="w-3.5 h-3.5 text-amber-400 mr-1.5 shrink-0" />
-                    <span className="text-xs font-semibold text-amber-100 truncate">
-                      {cap.text}
-                    </span>
-                    <span className="ml-auto text-[9px] font-mono text-amber-300/70 shrink-0 pl-1.5">
-                      {(cap.endTime - cap.startTime).toFixed(1)}s
-                    </span>
-
                     {/* Right Trim Handle */}
                     {!isCaptionLocked && (
                       <div
                         data-trim-handle="true"
                         onPointerDown={(e) => handleCaptionTrimStart(e, cap.id, 'right')}
-                        title="Trim subtitle end"
+                        title="Trim compound caption end"
                         className="absolute right-0 top-0 bottom-0 w-2.5 bg-amber-500/30 hover:bg-amber-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-amber-500/60"
                       >
                         <div className="w-0.5 h-3 bg-white/80 rounded" />

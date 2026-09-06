@@ -63,14 +63,11 @@ export function renderCaptionsAndHookTitle(options: RenderCaptionsOptions) {
     }
   }
 
-  // If still not active and far from speech (e.g. silence gaps > 0.4s, or before/after speech),
-  // hide captions dynamically to prevent cluttering the canvas
+  // If not active and in silence gaps (>0.4s pause, or before/after speech),
+  // suppress captions dynamically to keep preview clean
   if (targetIdx === -1) {
-    if (currentTime < words[0].start - 0.4 || currentTime > words[words.length - 1].end + 0.4) {
-      lastSubtitleBounds = null;
-      return;
-    }
-    targetIdx = currentTime < words[0].start ? 0 : words.length - 1;
+    lastSubtitleBounds = null;
+    return;
   }
 
   // Group into line chunks according to template.max_words_per_line
