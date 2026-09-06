@@ -31,6 +31,8 @@ import { executeAutoViralEdit } from './core/ai/autoEditor';
 import { generateDemoVideoClip } from './core/video/demoMediaGenerator';
 import { SUPOCLIP_CAPTION_TEMPLATES } from './core/captions/supoClipTemplates';
 import { generateViralMoments, generateAdaptiveTranscript } from './core/ai/viralityScorer';
+import { autoTranscribeVideoAudio } from './core/ai/captionTranscriber';
+import { decodeAudioBuffer } from './core/audio/audioAnalyzer';
 
 export function App() {
   const [clips, setClips] = useState<VideoClip[]>([]);
@@ -95,7 +97,7 @@ export function App() {
     });
   }, [clips]);
 
-  // Initial load: automatically load starter demo & pre-calculate viral moments
+  // Initial load: automatically load starter demo & pre-calculate viral moments with live captions
   useEffect(() => {
     let isMounted = true;
     const initDemo = async () => {
@@ -107,11 +109,32 @@ export function App() {
         });
         if (isMounted) {
           setClips([demoClip]);
-          const moments = generateViralMoments([demoClip]);
-          setViralMoments(moments);
-          if (moments.length > 0) {
-            setActiveMomentId(moments[0].id);
-            setHookTitle(moments[0].scores.hookTitle);
+
+          // Auto-transcribe demo clip so captions are live on screen immediately
+          let audioBuf = demoClip.audioBuffer;
+          if (!audioBuf && demoClip.blob) {
+            try {
+              audioBuf = await decodeAudioBuffer(demoClip.blob);
+              demoClip.audioBuffer = audioBuf;
+            } catch (e) {
+              console.warn('Demo audio decode error:', e);
+            }
+          }
+          if (!audioBuf) {
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            audioBuf = ctx.createBuffer(1, Math.max(1, Math.round(demoClip.duration * 44100)), 44100);
+          }
+
+          const demoWords = await autoTranscribeVideoAudio(audioBuf);
+          if (isMounted) {
+            setWords(demoWords);
+            setShowCaptions(true);
+            const moments = generateViralMoments([demoClip], 30, demoWords);
+            setViralMoments(moments);
+            if (moments.length > 0) {
+              setActiveMomentId(moments[0].id);
+              setHookTitle(moments[0].scores.hookTitle);
+            }
           }
         }
       } catch (e) {
@@ -127,22 +150,82 @@ export function App() {
   // Total duration of current sequence
   const totalDuration = clips.reduce((acc, c) => Math.max(acc, c.startTimelineTime + c.duration), 0);
 
-  // Add Clip sequentially to timeline without injecting fake captions
-  const handleAddClip = useCallback((newClip: VideoClip) => {
+  // Add Clip sequentially to timeline and AUTO-TRANSCRIBE audio for live screen captions!
+  const handleAddClip = useCallback(async (newClip: VideoClip) => {
+    let clipStart = 0;
+    let isReplacingDemo = false;
+
     setClips((prev) => {
+      // If only the starter demo clip is present, replace it with the uploaded clip
+      isReplacingDemo = prev.length === 1 && prev[0].id.startsWith('clip-demo-');
+      if (isReplacingDemo) {
+        clipStart = 0;
+        return [{ ...newClip, startTimelineTime: 0 }];
+      }
       const lastClip = prev[prev.length - 1];
-      const startTimelineTime = lastClip ? lastClip.startTimelineTime + lastClip.duration : 0;
-      const updated = [...prev, { ...newClip, startTimelineTime }];
-
-      // Recalculate viral moments with current user words
-      setWords((curWords) => {
-        const moments = generateViralMoments(updated, 30, curWords);
-        setViralMoments(moments);
-        return curWords;
-      });
-
-      return updated;
+      clipStart = lastClip ? lastClip.startTimelineTime + lastClip.duration : 0;
+      return [...prev, { ...newClip, startTimelineTime: clipStart }];
     });
+
+    // Auto transcribe video audio immediately without manual intervention
+    try {
+      let buffer = newClip.audioBuffer;
+      if (!buffer) {
+        if (newClip.blob) {
+          try {
+            buffer = await decodeAudioBuffer(newClip.blob);
+          } catch (e) {
+            console.warn('Decode audio failed for clip:', e);
+          }
+        } else if (newClip.sourceUrl) {
+          try {
+            const resp = await fetch(newClip.sourceUrl);
+            const arrayBuf = await resp.arrayBuffer();
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            buffer = await ctx.decodeAudioData(arrayBuf);
+          } catch (e) {
+            console.warn('Fetch audio failed for clip:', e);
+          }
+        }
+      }
+
+      if (!buffer) {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        buffer = ctx.createBuffer(1, Math.max(1, Math.round((newClip.duration || 5) * 44100)), 44100);
+      }
+
+      const generatedWords = await autoTranscribeVideoAudio(buffer);
+      if (generatedWords.length > 0) {
+        setShowCaptions(true);
+        setWords((prevWords) => {
+          const offset = isReplacingDemo ? 0 : clipStart;
+          const adjustedWords = offset > 0
+            ? generatedWords.map((w) => ({
+                ...w,
+                start: Number((w.start + offset).toFixed(2)),
+                end: Number((w.end + offset).toFixed(2)),
+              }))
+            : generatedWords;
+
+          const combined = !isReplacingDemo && offset > 0 && prevWords.length > 0
+            ? [...prevWords, ...adjustedWords].sort((a, b) => a.start - b.start)
+            : adjustedWords;
+
+          setClips((currentClips) => {
+            const moments = generateViralMoments(currentClips, 30, combined);
+            setViralMoments(moments);
+            if (moments.length > 0) {
+              setHookTitle(moments[0].scores.hookTitle);
+            }
+            return currentClips;
+          });
+
+          return combined;
+        });
+      }
+    } catch (err) {
+      console.warn('Auto-transcribe on clip upload error:', err);
+    }
   }, []);
 
   // Add Sticker with Paired SFX

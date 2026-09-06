@@ -44,6 +44,7 @@ import {
   detectEnglishSpeechSegments,
   alignScriptToSpeechAudio,
   transcribeWithWhisperApi,
+  autoTranscribeVideoAudio,
 } from '../../core/ai/captionTranscriber';
 import { decodeAudioBuffer } from '../../core/audio/audioAnalyzer';
 
@@ -187,61 +188,38 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
   const handleAutoTranscribeVideo = async () => {
     setIsTranscribing(true);
     try {
-      const validClips = clips.filter((c) => c.blob || c.sourceUrl);
+      const validClips = clips.filter((c) => c.blob || c.sourceUrl || c.audioBuffer);
       if (validClips.length === 0) {
         alert('Please upload a video or audio clip first in the Assets tab.');
         return;
       }
 
-      // Decode audio from first clip
+      // Decode audio from first clip or use cached audioBuffer
       const firstClip = validClips[0];
-      let audioBuffer: AudioBuffer | null = null;
+      let audioBuffer: AudioBuffer | null = firstClip.audioBuffer || null;
 
-      if (firstClip.blob) {
-        audioBuffer = await decodeAudioBuffer(firstClip.blob);
-      } else {
-        const resp = await fetch(firstClip.sourceUrl);
-        const arrayBuf = await resp.arrayBuffer();
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioBuffer = await ctx.decodeAudioData(arrayBuf);
-      }
-
-      const apiKey = whisperApiKey.trim();
-
-      // If user provided Groq or OpenAI Whisper Key, run genuine Whisper Large V3
-      if (apiKey) {
-        const wavBlob = encodeAudioBufferToWav(audioBuffer);
-        const service = apiKey.startsWith('gsk_') ? 'groq' : 'openai';
-        const transcribedWords = await transcribeWithWhisperApi(wavBlob, apiKey, service);
-        if (transcribedWords.length > 0) {
-          setWords(transcribedWords);
-          setActiveTab('words');
-          return;
+      if (!audioBuffer) {
+        if (firstClip.blob) {
+          audioBuffer = await decodeAudioBuffer(firstClip.blob);
+        } else if (firstClip.sourceUrl) {
+          const resp = await fetch(firstClip.sourceUrl);
+          const arrayBuf = await resp.arrayBuffer();
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          audioBuffer = await ctx.decodeAudioData(arrayBuf);
         }
       }
 
-      // Otherwise, run English Voice Activity Detection (VAD) & speech segmentation
-      const segments = detectEnglishSpeechSegments(audioBuffer);
-      if (segments.length > 0) {
-        const generated: TranscriptWord[] = [];
-        segments.forEach((seg, sIdx) => {
-          const wordCount = Math.max(1, Math.round(seg.duration / 0.38));
-          const step = seg.duration / wordCount;
-          for (let w = 0; w < wordCount; w++) {
-            const start = seg.start + w * step;
-            const end = Math.min(seg.end, start + step * 0.92);
-            generated.push({
-              word: `Speech_${sIdx + 1}.${w + 1}`,
-              start: Number(start.toFixed(2)),
-              end: Number(end.toFixed(2)),
-              isEmphasis: w === 0,
-            });
-          }
-        });
-        setWords(generated);
+      if (!audioBuffer) {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioBuffer = ctx.createBuffer(1, Math.max(1, Math.round((firstClip.duration || 5) * 44100)), 44100);
+      }
+
+      const apiKey = whisperApiKey.trim();
+      const transcribedWords = await autoTranscribeVideoAudio(audioBuffer, apiKey);
+      if (transcribedWords.length > 0) {
+        setWords(transcribedWords);
+        setShowCaptions(true);
         setActiveTab('words');
-      } else {
-        alert('No vocal speech segments detected in video audio. You can use Live Mic Dictation or Paste English Transcript.');
       }
     } catch (err: any) {
       console.error(err);
@@ -593,6 +571,14 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
                   title="Add Subtitle Word at Playhead"
                 >
                   <Plus className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={handleAutoTranscribeVideo}
+                  disabled={isTranscribing}
+                  className="bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 text-indigo-300 p-2 rounded-lg transition shrink-0 flex items-center justify-center"
+                  title="Re-transcribe Audio from Video"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 text-amber-300 ${isTranscribing ? 'animate-spin' : ''}`} />
                 </button>
                 <button
                   onClick={handleClearAllWords}

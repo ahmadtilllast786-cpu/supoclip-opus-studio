@@ -72,6 +72,7 @@ export interface VideoClip {
   transitionDuration: number; // e.g. 0.3s
   waveform?: number[];   // Visual peak representation
   faceCenterX?: number;  // Detected face horizontal center (0-1) for smart auto-framing
+  audioBuffer?: AudioBuffer;
 }
 
 export interface StickerOverlay {

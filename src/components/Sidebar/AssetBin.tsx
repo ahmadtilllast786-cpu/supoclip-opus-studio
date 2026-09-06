@@ -41,11 +41,12 @@ export const AssetBin: React.FC<AssetBinProps> = ({
 
         const duration = video.duration && !isNaN(video.duration) ? video.duration : 5;
 
-        // Extract waveform
+        // Extract waveform and audio buffer
         let waveform: number[] = [];
+        let decodedBuffer: AudioBuffer | undefined;
         try {
-          const audioBuffer = await decodeAudioBuffer(file);
-          waveform = generateWaveformPeaks(audioBuffer, 60);
+          decodedBuffer = await decodeAudioBuffer(file);
+          waveform = generateWaveformPeaks(decodedBuffer, 60);
         } catch {
           // Fallback waveform if no audio track
           waveform = Array.from({ length: 40 }, () => 0.2 + Math.random() * 0.6);
@@ -68,6 +69,7 @@ export const AssetBin: React.FC<AssetBinProps> = ({
           transitionIn: 'whip-pan',
           transitionDuration: 0.25,
           waveform,
+          audioBuffer: decodedBuffer,
         };
 
         onAddClip(newClip);

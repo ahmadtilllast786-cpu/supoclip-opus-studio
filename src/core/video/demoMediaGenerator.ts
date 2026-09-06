@@ -165,6 +165,17 @@ export async function generateDemoVideoClip(
     waveform.push(i % 3 === 0 ? 0.05 : 0.4 + Math.random() * 0.5);
   }
 
+  // Generate AudioBuffer for instant auto-transcription & voice analysis
+  let audioBuffer: AudioBuffer | undefined;
+  try {
+    const arrayBuf = await videoBlob.arrayBuffer();
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    audioBuffer = await ctx.decodeAudioData(arrayBuf);
+  } catch {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    audioBuffer = ctx.createBuffer(1, Math.max(1, Math.round(durationSec * 44100)), 44100);
+  }
+
   return {
     id: `clip-demo-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
     name: title,
@@ -182,5 +193,6 @@ export async function generateDemoVideoClip(
     transitionIn: 'none',
     transitionDuration: 0.3,
     waveform,
+    audioBuffer,
   };
 }
