@@ -27,11 +27,16 @@ import {
   CaptionTemplateId,
   TranscriptWord,
   VideoClip,
+  CaptionTrackItem,
 } from '../../types/timeline';
 import {
   SUPOCLIP_CAPTION_TEMPLATES,
   getCaptionTemplate,
 } from '../../core/captions/supoClipTemplates';
+import {
+  groupWordsIntoCaptionChunks,
+} from '../../core/captions/captionHandler';
+import { extractSequentialAudioTrack } from '../../core/audio/audioExtractor';
 import {
   SUPPORTED_LANGUAGES,
   detectAudioLanguage,
@@ -45,6 +50,7 @@ import {
   alignScriptToSpeechAudio,
   transcribeWithWhisperApi,
   autoTranscribeVideoAudio,
+  transcribeContinuousAudio,
 } from '../../core/ai/captionTranscriber';
 import { decodeAudioBuffer } from '../../core/audio/audioAnalyzer';
 
@@ -57,6 +63,12 @@ interface CaptionCustomizerPanelProps {
   setShowCaptions: (show: boolean) => void;
   words: TranscriptWord[];
   setWords: React.Dispatch<React.SetStateAction<TranscriptWord[]>>;
+  captions?: CaptionTrackItem[];
+  setCaptions?: React.Dispatch<React.SetStateAction<CaptionTrackItem[]>>;
+  detectedLanguage?: string;
+  setDetectedLanguage?: (lang: string) => void;
+  detectedConfidence?: number;
+  setDetectedConfidence?: (conf: number) => void;
   currentTime: number;
   onSeek: (time: number) => void;
   clips?: VideoClip[];
@@ -72,6 +84,12 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
   setShowCaptions,
   words,
   setWords,
+  captions = [],
+  setCaptions,
+  detectedLanguage = 'en',
+  setDetectedLanguage,
+  detectedConfidence = 0.96,
+  setDetectedConfidence,
   currentTime,
   onSeek,
   clips = [],
@@ -90,9 +108,27 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
 
   const templateList = Object.values(SUPOCLIP_CAPTION_TEMPLATES);
 
-  // Auto-detect current language based on words
+  // Auto-detect current language based on words or audio transcription
   const fullTranscript = words.map((w) => w.word).join(' ');
-  const detectedLang = detectAudioLanguage(fullTranscript);
+  const textDetectedLang = detectAudioLanguage(fullTranscript);
+  const effectiveLangCode = detectedLanguage || textDetectedLang.code;
+  const currentLangInfo =
+    SUPPORTED_LANGUAGES.find((l) => l.code === effectiveLangCode) || {
+      code: effectiveLangCode,
+      name: effectiveLangCode.toUpperCase(),
+      flag: '🌐',
+    };
+
+  // Helper to keep both word-level list and timeline caption chunk cards perfectly in sync
+  const syncWordsAndCaptions = (newWords: TranscriptWord[], lang?: string) => {
+    setWords(newWords);
+    if (setCaptions) {
+      const chunks = groupWordsIntoCaptionChunks(newWords, {
+        detectedLanguage: lang || effectiveLangCode,
+      });
+      setCaptions(chunks);
+    }
+  };
 
   const handleSelectTemplate = (id: CaptionTemplateId) => {
     const base = getCaptionTemplate(id);
@@ -103,9 +139,9 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
   const handleLiveTranscribe = async () => {
     setIsTranscribing(true);
     try {
-      const result = await transcribeLiveSpeech(detectedLang.code);
+      const result = await transcribeLiveSpeech(effectiveLangCode);
       if (result.words.length > 0) {
-        setWords(result.words);
+        syncWordsAndCaptions(result.words, effectiveLangCode);
       }
     } catch (err: any) {
       alert(`Speech recognition: ${err?.message || 'Speak into microphone or upload media'}`);
@@ -117,7 +153,8 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
   // 1-Click Multilingual Translation
   const handleTranslate = () => {
     const translated = translateTranscriptWords(words, selectedTargetLang);
-    setWords(translated);
+    if (setDetectedLanguage) setDetectedLanguage(selectedTargetLang);
+    syncWordsAndCaptions(translated, selectedTargetLang);
   };
 
   // Export SRT
@@ -158,7 +195,7 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
       if (content) {
         const parsed = parseSrt(content);
         if (parsed.length > 0) {
-          setWords(parsed);
+          syncWordsAndCaptions(parsed);
         }
       }
     };
@@ -171,11 +208,12 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
       word: 'NEW_WORD',
       start: Number(currentTime.toFixed(2)),
       end: Number((currentTime + 0.4).toFixed(2)),
+      confidence: 0.98,
       isEmphasis: true,
       emoji: '🔥',
     };
     const updated = [...words, newWord].sort((a, b) => a.start - b.start);
-    setWords(updated);
+    syncWordsAndCaptions(updated);
   };
 
   // Save Whisper API Key
@@ -184,7 +222,7 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
     localStorage.setItem('short_editor_whisper_key', key);
   };
 
-  // 1-Click Real English Speech Transcriber from Video Audio
+  // 1-Click Multilingual Speech Transcriber from Video Audio with Auto-Language Detection
   const handleAutoTranscribeVideo = async () => {
     setIsTranscribing(true);
     try {
@@ -194,30 +232,19 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
         return;
       }
 
-      // Decode audio from first clip or use cached audioBuffer
-      const firstClip = validClips[0];
-      let audioBuffer: AudioBuffer | null = firstClip.audioBuffer || null;
-
-      if (!audioBuffer) {
-        if (firstClip.blob) {
-          audioBuffer = await decodeAudioBuffer(firstClip.blob);
-        } else if (firstClip.sourceUrl) {
-          const resp = await fetch(firstClip.sourceUrl);
-          const arrayBuf = await resp.arrayBuffer();
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          audioBuffer = await ctx.decodeAudioData(arrayBuf);
-        }
-      }
-
-      if (!audioBuffer) {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        audioBuffer = ctx.createBuffer(1, Math.max(1, Math.round((firstClip.duration || 5) * 44100)), 44100);
-      }
+      // Extract continuous sequential 16kHz mono audio honoring timeline offsets, trimming, speeds, and volumes
+      const { audioBuffer, wavBlob } = await extractSequentialAudioTrack(clips, 16000);
 
       const apiKey = whisperApiKey.trim();
-      const transcribedWords = await autoTranscribeVideoAudio(audioBuffer, apiKey);
+      // Auto-detect spoken language across 99+ Whisper languages, word timestamps with confidence
+      const { words: transcribedWords, detectedLanguage: langCode, confidence } =
+        await transcribeContinuousAudio(wavBlob, audioBuffer, apiKey);
+
       if (transcribedWords.length > 0) {
-        setWords(transcribedWords);
+        if (setDetectedLanguage) setDetectedLanguage(langCode);
+        if (setDetectedConfidence) setDetectedConfidence(confidence);
+
+        syncWordsAndCaptions(transcribedWords, langCode);
         setShowCaptions(true);
         setActiveTab('words');
       }
@@ -240,7 +267,7 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
         audioBuffer = await decodeAudioBuffer(validClips[0].blob);
       }
       const aligned = alignScriptToSpeechAudio(pastedScript, audioBuffer, totalDuration || 10);
-      setWords(aligned);
+      syncWordsAndCaptions(aligned);
       setPastedScript('');
       setIsScriptDrawerOpen(false);
       setActiveTab('words');
@@ -255,7 +282,7 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
   const handleClearAllWords = () => {
     if (words.length === 0) return;
     if (confirm('Clear all subtitle words?')) {
-      setWords([]);
+      syncWordsAndCaptions([]);
     }
   };
 
@@ -616,9 +643,8 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => {
                             const val = e.target.value;
-                            setWords((prev) =>
-                              prev.map((w, i) => (i === idx ? { ...w, word: val } : w))
-                            );
+                            const updated = words.map((w, i) => (i === idx ? { ...w, word: val } : w));
+                            syncWordsAndCaptions(updated);
                           }}
                           className="bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-xs font-bold text-slate-100 flex-1 focus:border-indigo-500"
                         />
@@ -628,11 +654,10 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
                       <div className="flex items-center space-x-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => {
-                            setWords((prev) =>
-                              prev.map((w, i) =>
-                                i === idx ? { ...w, isEmphasis: !w.isEmphasis } : w
-                              )
+                            const updated = words.map((w, i) =>
+                              i === idx ? { ...w, isEmphasis: !w.isEmphasis } : w
                             );
+                            syncWordsAndCaptions(updated);
                           }}
                           className={`p-1 rounded transition ${
                             item.isEmphasis
@@ -646,7 +671,8 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
 
                         <button
                           onClick={() => {
-                            setWords((prev) => prev.filter((_, i) => i !== idx));
+                            const updated = words.filter((_, i) => i !== idx);
+                            syncWordsAndCaptions(updated);
                           }}
                           className="p-1 text-slate-500 hover:text-rose-400 transition"
                           title="Delete Word"
@@ -701,19 +727,42 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
       {/* TAB 3: Auto-Language Detection & AI Transcription */}
       {activeTab === 'language' && (
         <div className="space-y-3">
+          {/* Active Auto-Detected Language Status Badge */}
+          <div className="bg-slate-900/90 border border-indigo-500/40 p-3 rounded-xl flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <span className="text-xl leading-none">{currentLangInfo.flag}</span>
+              <div>
+                <div className="text-xs font-bold text-slate-100 flex items-center space-x-1.5">
+                  <span>{currentLangInfo.name}</span>
+                  <span className="text-[9px] uppercase font-mono px-1 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
+                    {effectiveLangCode}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Auto Language Detection: <span className="text-emerald-400 font-semibold">Active</span>
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-950/70 border border-emerald-800/80 px-2 py-0.5 rounded">
+                {Math.round(detectedConfidence * 100)}% Conf
+              </div>
+            </div>
+          </div>
+
           {/* Primary 1-Click Video Speech Transcriber */}
           <div className="bg-gradient-to-br from-indigo-950/60 to-purple-950/40 border border-indigo-500/50 p-3 rounded-xl space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-white flex items-center space-x-1.5">
                 <Sparkles className="w-4 h-4 text-amber-400" />
-                <span>Auto-Transcribe Video Audio</span>
+                <span>Auto-Transcribe All Clips</span>
               </span>
               <span className="text-[9px] font-mono bg-indigo-950 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-800">
-                English VAD
+                Auto-Detect 99+ Langs
               </span>
             </div>
             <p className="text-[10px] text-slate-300 leading-relaxed">
-              Analyzes the voice cadence and acoustic energy from your video to generate timestamped subtitles.
+              Extracts 16kHz continuous audio across all sequential clips, automatically recognizes spoken language, and generates word-level timestamps.
             </p>
             <button
               onClick={handleAutoTranscribeVideo}
@@ -721,7 +770,7 @@ export const CaptionCustomizerPanel: React.FC<CaptionCustomizerPanelProps> = ({
               className="w-full bg-gradient-to-r from-indigo-500 to-pink-500 hover:from-indigo-600 hover:to-pink-600 text-white font-bold text-xs py-2 px-3 rounded-lg shadow-md shadow-indigo-500/25 transition active:scale-95 flex items-center justify-center space-x-1.5"
             >
               <Sparkles className={`w-3.5 h-3.5 text-amber-300 ${isTranscribing ? 'animate-spin' : ''}`} />
-              <span>{isTranscribing ? 'Transcribing Audio...' : 'Transcribe Uploaded Video'}</span>
+              <span>{isTranscribing ? 'Transcribing Continuous Audio...' : 'Transcribe Video Audio'}</span>
             </button>
           </div>
 

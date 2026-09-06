@@ -20,6 +20,7 @@ import {
   Eye,
   EyeOff,
   Lock,
+  Subtitles,
 } from 'lucide-react';
 import {
   VideoClip,
@@ -28,8 +29,11 @@ import {
   SfxTrackItem,
   SfxPreset,
   TransitionType,
+  CaptionTrackItem,
+  TranscriptWord,
 } from '../../types/timeline';
 import { extractClipWaveformSegment } from '../../core/audio/audioAnalyzer';
+import { recalculateChunkWordTimings, flattenCaptionsToWords } from '../../core/captions/captionHandler';
 import { TimelineToolbar, TimelineToolMode } from './TimelineToolbar';
 import { TimelineMinimap } from './TimelineMinimap';
 import { TimelineRuler } from './TimelineRuler';
@@ -52,6 +56,13 @@ interface TimelineProps {
   setSelectedOverlayId: (id: string | null) => void;
   selectedSfxId?: string | null;
   setSelectedSfxId?: (id: string | null) => void;
+  captions?: CaptionTrackItem[];
+  setCaptions?: React.Dispatch<React.SetStateAction<CaptionTrackItem[]>>;
+  selectedCaptionId?: string | null;
+  setSelectedCaptionId?: (id: string | null) => void;
+  words?: TranscriptWord[];
+  setWords?: React.Dispatch<React.SetStateAction<TranscriptWord[]>>;
+  detectedLanguage?: string;
   onAddPunchZoom: () => void;
 }
 
@@ -72,6 +83,13 @@ export const Timeline: React.FC<TimelineProps> = ({
   setSelectedOverlayId,
   selectedSfxId,
   setSelectedSfxId,
+  captions = [],
+  setCaptions,
+  selectedCaptionId,
+  setSelectedCaptionId,
+  words = [],
+  setWords,
+  detectedLanguage = 'en',
   onAddPunchZoom,
 }) => {
   // Timeline Zoom & Viewport Sizing (Adjusted to One Screen by Default)
@@ -94,12 +112,14 @@ export const Timeline: React.FC<TimelineProps> = ({
   const [razorHoverClipId, setRazorHoverClipId] = useState<string | null>(null);
 
   // Track Lock States
+  const [isCaptionLocked, setIsCaptionLocked] = useState(false);
   const [isOverlayLocked, setIsOverlayLocked] = useState(false);
   const [isVideoLocked, setIsVideoLocked] = useState(false);
   const [isAudioLocked, setIsAudioLocked] = useState(false);
   const [isSfxLocked, setIsSfxLocked] = useState(false);
 
   // Track Visibility & Mute States
+  const [isCaptionVisible, setIsCaptionVisible] = useState(true);
   const [isOverlayVisible, setIsOverlayVisible] = useState(true);
   const [isVideoVisible, setIsVideoVisible] = useState(true);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
@@ -125,7 +145,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   // Trailing dead space clamped to exactly 5 seconds
   const trailingDeadSpaceSec = 5;
 
-  // Exact ending boundary time across ALL tracks (Clips, Overlays, SFX)
+  // Exact ending boundary time across ALL tracks (Clips, Overlays, SFX, Captions)
   const clipsEndSec = clips.reduce(
     (acc, c) => Math.max(acc, c.startTimelineTime + c.duration),
     0
@@ -138,15 +158,19 @@ export const Timeline: React.FC<TimelineProps> = ({
     (acc, s) => Math.max(acc, s.startTimelineTime + s.duration),
     0
   );
-  const projectEndSec = Math.max(clipsEndSec, overlaysEndSec, sfxEndSec, 0);
+  const captionsEndSec = (captions || []).reduce(
+    (acc, c) => Math.max(acc, c.endTime),
+    0
+  );
+  const projectEndSec = Math.max(clipsEndSec, overlaysEndSec, sfxEndSec, captionsEndSec, 0);
 
   // Total project duration including clamped trailing 5s dead space
   const totalDuration = projectEndSec > 0 ? projectEndSec + trailingDeadSpaceSec : 10;
 
-  // Dragging Item State (Clips, Overlays, SFX)
+  // Dragging Item State (Clips, Overlays, SFX, Captions)
   const [draggingItem, setDraggingItem] = useState<{
     id: string;
-    type: 'clip' | 'overlay' | 'sfx';
+    type: 'clip' | 'overlay' | 'sfx' | 'caption';
     initialStartTime: number;
     duration: number;
     startX: number;
@@ -154,7 +178,7 @@ export const Timeline: React.FC<TimelineProps> = ({
   } | null>(null);
 
   // Active Drop Zone Highlight State
-  const [dragOverTrack, setDragOverTrack] = useState<'v2' | 'v1' | 'a2' | null>(null);
+  const [dragOverTrack, setDragOverTrack] = useState<'c1' | 'v2' | 'v1' | 'a2' | null>(null);
   const hasMovedRef = useRef(false);
   const rafItemDragRef = useRef<number | null>(null);
 
@@ -201,7 +225,9 @@ export const Timeline: React.FC<TimelineProps> = ({
       : Math.max(containerWidth || 800, naturalContentWidth);
 
   // Has any active selection
-  const hasSelection = Boolean(selectedClipId || selectedOverlayId || selectedSfxId);
+  const hasSelection = Boolean(
+    selectedClipId || selectedOverlayId || selectedSfxId || selectedCaptionId
+  );
 
   // Calculate magnetic snap points across all elements
   const getSnapPoints = useCallback((): number[] => {
@@ -218,11 +244,15 @@ export const Timeline: React.FC<TimelineProps> = ({
       points.add(Number(s.startTimelineTime.toFixed(3)));
       points.add(Number((s.startTimelineTime + s.duration).toFixed(3)));
     });
+    (captions || []).forEach((cap) => {
+      points.add(Number(cap.startTime.toFixed(3)));
+      points.add(Number(cap.endTime.toFixed(3)));
+    });
     zoomKeyframes.forEach((k) => {
       points.add(Number(k.startTimelineTime.toFixed(3)));
     });
     return Array.from(points);
-  }, [clips, overlays, sfxTracks, zoomKeyframes, projectEndSec]);
+  }, [clips, overlays, sfxTracks, captions, zoomKeyframes, projectEndSec]);
 
   // Split Clip at specific timeline timestamp
   const handleSplitClipAt = useCallback(
@@ -290,21 +320,32 @@ export const Timeline: React.FC<TimelineProps> = ({
     } else if (selectedSfxId && !isSfxLocked) {
       setSfxTracks((prev) => prev.filter((s) => s.id !== selectedSfxId));
       if (setSelectedSfxId) setSelectedSfxId(null);
+    } else if (selectedCaptionId && !isCaptionLocked && setCaptions) {
+      setCaptions((prev) => {
+        const updated = prev.filter((c) => c.id !== selectedCaptionId);
+        if (setWords) setWords(flattenCaptionsToWords(updated));
+        return updated;
+      });
+      if (setSelectedCaptionId) setSelectedCaptionId(null);
     }
   }, [
     selectedClipId,
     selectedOverlayId,
     selectedSfxId,
+    selectedCaptionId,
     clips,
     isVideoLocked,
     isOverlayLocked,
     isSfxLocked,
+    isCaptionLocked,
     setClips,
     setOverlays,
     setSfxTracks,
+    setCaptions,
     setSelectedClipId,
     setSelectedOverlayId,
     setSelectedSfxId,
+    setSelectedCaptionId,
   ]);
 
   // Ripple Delete: Deletes selected clip and pulls all succeeding clips left
@@ -596,11 +637,11 @@ export const Timeline: React.FC<TimelineProps> = ({
     window.addEventListener('mouseup', handleTrimEnd);
   };
 
-  // Universal Item Drag Engine for Clips, Overlays, and SFX
+  // Universal Item Drag Engine for Clips, Overlays, SFX, and Captions
   const handleItemDragStart = (
     e: React.PointerEvent,
     id: string,
-    type: 'clip' | 'overlay' | 'sfx',
+    type: 'clip' | 'overlay' | 'sfx' | 'caption',
     initialStartTime: number,
     duration: number
   ) => {
@@ -609,6 +650,7 @@ export const Timeline: React.FC<TimelineProps> = ({
     if (type === 'clip' && isVideoLocked) return;
     if (type === 'overlay' && isOverlayLocked) return;
     if (type === 'sfx' && isSfxLocked) return;
+    if (type === 'caption' && isCaptionLocked) return;
 
     // Ignore if clicking buttons, trim handles, or inputs
     const target = e.target as HTMLElement;
@@ -622,14 +664,22 @@ export const Timeline: React.FC<TimelineProps> = ({
       setSelectedClipId(id);
       setSelectedOverlayId(null);
       if (setSelectedSfxId) setSelectedSfxId(null);
+      if (setSelectedCaptionId) setSelectedCaptionId(null);
     } else if (type === 'overlay') {
       setSelectedOverlayId(id);
       setSelectedClipId(null);
       if (setSelectedSfxId) setSelectedSfxId(null);
+      if (setSelectedCaptionId) setSelectedCaptionId(null);
     } else if (type === 'sfx') {
       if (setSelectedSfxId) setSelectedSfxId(id);
       setSelectedClipId(null);
       setSelectedOverlayId(null);
+      if (setSelectedCaptionId) setSelectedCaptionId(null);
+    } else if (type === 'caption') {
+      if (setSelectedCaptionId) setSelectedCaptionId(id);
+      setSelectedClipId(null);
+      setSelectedOverlayId(null);
+      if (setSelectedSfxId) setSelectedSfxId(null);
     }
 
     const startX = e.clientX;
@@ -708,11 +758,25 @@ export const Timeline: React.FC<TimelineProps> = ({
           setSfxTracks((prev) =>
             prev.map((s) => (s.id === id ? { ...s, startTimelineTime: newStart } : s))
           );
+        } else if (type === 'caption' && setCaptions) {
+          const chunkDur = duration;
+          const newEnd = newStart + chunkDur;
+          setCaptions((prev) =>
+            prev.map((c) =>
+              c.id === id ? recalculateChunkWordTimings(c, newStart, newEnd) : c
+            )
+          );
         }
       });
     };
 
     const handlePointerUp = () => {
+      if (type === 'caption' && setWords && setCaptions) {
+        setCaptions((curr) => {
+          setWords(flattenCaptionsToWords(curr));
+          return curr;
+        });
+      }
       setDraggingItem(null);
       setSnapGuideTime(null);
       if (rafItemDragRef.current !== null) {
@@ -818,6 +882,79 @@ export const Timeline: React.FC<TimelineProps> = ({
     window.addEventListener('pointerup', handleUp);
     window.addEventListener('pointercancel', handleUp);
   };
+
+  // Caption Subtitle Trimming Logic (Start & End Handles)
+  const handleCaptionTrimStart = (
+    e: React.PointerEvent,
+    captionId: string,
+    edge: 'left' | 'right'
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (isCaptionLocked || !setCaptions) return;
+    const targetCaption = (captions || []).find((c) => c.id === captionId);
+    if (!targetCaption) return;
+
+    const startX = e.clientX;
+    const initialStart = targetCaption.startTime;
+    const initialEnd = targetCaption.endTime;
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const deltaSec = (moveEvent.clientX - startX) / pixelsPerSecond;
+      setCaptions((prev) =>
+        prev.map((c) => {
+          if (c.id !== captionId) return c;
+          if (edge === 'left') {
+            const maxStart = initialEnd - 0.2;
+            const newStart = Math.max(0, Math.min(maxStart, initialStart + deltaSec));
+            return recalculateChunkWordTimings(c, newStart, c.endTime);
+          } else {
+            const minEnd = initialStart + 0.2;
+            const newEnd = Math.max(minEnd, initialEnd + deltaSec);
+            return recalculateChunkWordTimings(c, c.startTime, newEnd);
+          }
+        })
+      );
+    };
+
+    const handleUp = () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+      if (setWords && setCaptions) {
+        setCaptions((curr) => {
+          setWords(flattenCaptionsToWords(curr));
+          return curr;
+        });
+      }
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+  };
+
+  // Quick Add Subtitle Chunk at Playhead
+  const handleAddCaptionAtPlayhead = useCallback(() => {
+    if (isCaptionLocked || !setCaptions) return;
+    const newCap: CaptionTrackItem = {
+      id: `caption-${Date.now()}`,
+      text: 'New Subtitle',
+      startTime: Number(currentTime.toFixed(2)),
+      endTime: Number((currentTime + 1.8).toFixed(2)),
+      words: [
+        { word: 'New', start: currentTime, end: currentTime + 0.8, confidence: 0.98 },
+        { word: 'Subtitle', start: currentTime + 0.8, end: currentTime + 1.8, confidence: 0.98 },
+      ],
+      detectedLanguage: detectedLanguage || 'en',
+    };
+    setCaptions((prev) => {
+      const updated = [...prev, newCap].sort((a, b) => a.startTime - b.startTime);
+      if (setWords) setWords(flattenCaptionsToWords(updated));
+      return updated;
+    });
+    if (setSelectedCaptionId) setSelectedCaptionId(newCap.id);
+  }, [isCaptionLocked, setCaptions, setWords, currentTime, detectedLanguage, setSelectedCaptionId]);
 
   // Keyboard Shortcuts Listener
   useEffect(() => {
@@ -950,7 +1087,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               : 'cursor-grab'
             : 'cursor-default'
         }`}
-        style={{ height: '315px' }}
+        style={{ height: '375px' }}
       >
         <div style={{ width: `${timelineWidth}px` }} className="relative h-full flex flex-col">
           {/* Time Ruler */}
@@ -1015,11 +1152,13 @@ export const Timeline: React.FC<TimelineProps> = ({
               style={{
                 left: `${TRACK_HEADER_WIDTH + draggingItem.currentStartTime * pixelsPerSecond}px`,
                 top:
-                  draggingItem.type === 'overlay'
+                  draggingItem.type === 'caption'
                     ? '32px'
-                    : draggingItem.type === 'clip'
+                    : draggingItem.type === 'overlay'
                     ? '88px'
-                    : '240px',
+                    : draggingItem.type === 'clip'
+                    ? '144px'
+                    : '290px',
               }}
               className="absolute z-50 pointer-events-none -translate-x-1/2 px-2.5 py-1 bg-indigo-600 text-white font-mono text-[11px] font-bold rounded-lg shadow-2xl border border-indigo-300/80 flex items-center gap-1.5 ring-2 ring-indigo-400/50"
             >
@@ -1031,6 +1170,154 @@ export const Timeline: React.FC<TimelineProps> = ({
               </span>
             </div>
           )}
+
+          {/* ========================================================= */}
+          {/* TRACK 0: C1 SUBTITLES & CAPTIONS TRACK (h-14)             */}
+          {/* ========================================================= */}
+          <div
+            className={`relative h-14 border-b border-slate-800/80 flex items-center bg-slate-950/60 transition-opacity ${
+              !isCaptionVisible ? 'opacity-30' : 'opacity-100'
+            }`}
+          >
+            <TimelineTrackHeader
+              type="caption"
+              trackId="c1"
+              label="Subtitles"
+              badge="C1"
+              isLocked={isCaptionLocked}
+              onToggleLock={() => setIsCaptionLocked((l) => !l)}
+              isVisible={isCaptionVisible}
+              onToggleVisibility={() => setIsCaptionVisible((v) => !v)}
+              onQuickAdd={handleAddCaptionAtPlayhead}
+              quickAddTitle="Add Subtitle chunk at current playhead"
+              itemCount={(captions || []).length}
+            />
+
+            {/* Lane Items & Dedicated Drop Zone */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                if (dragOverTrack !== 'c1') setDragOverTrack('c1');
+              }}
+              onDragLeave={() => {
+                setDragOverTrack((prev) => (prev === 'c1' ? null : prev));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverTrack(null);
+                if (isCaptionLocked || !setCaptions) return;
+
+                const rect = e.currentTarget.getBoundingClientRect();
+                const dropX = e.clientX - rect.left;
+                const dropSec = Math.max(0, dropX / pixelsPerSecond);
+
+                const newCap: CaptionTrackItem = {
+                  id: `caption-${Date.now()}`,
+                  text: 'New Subtitle',
+                  startTime: Number(dropSec.toFixed(2)),
+                  endTime: Number((dropSec + 1.8).toFixed(2)),
+                  words: [
+                    { word: 'New', start: dropSec, end: dropSec + 0.8, confidence: 0.95 },
+                    { word: 'Subtitle', start: dropSec + 0.8, end: dropSec + 1.8, confidence: 0.95 },
+                  ],
+                  detectedLanguage: detectedLanguage || 'en',
+                };
+                setCaptions((prev) => {
+                  const updated = [...prev, newCap].sort((a, b) => a.startTime - b.startTime);
+                  if (setWords) setWords(flattenCaptionsToWords(updated));
+                  return updated;
+                });
+                if (setSelectedCaptionId) setSelectedCaptionId(newCap.id);
+              }}
+              className={`relative flex-1 h-full flex items-center transition-all ${
+                dragOverTrack === 'c1'
+                  ? 'bg-amber-950/40 ring-2 ring-amber-400/80 ring-inset'
+                  : ''
+              }`}
+            >
+              {(captions || []).map((cap) => {
+                const isSelected = selectedCaptionId === cap.id;
+                const leftPx = cap.startTime * pixelsPerSecond;
+                const widthPx = Math.max(45, (cap.endTime - cap.startTime) * pixelsPerSecond);
+
+                const isTriggeredNow =
+                  currentTime >= cap.startTime && currentTime <= cap.endTime;
+
+                return (
+                  <div
+                    key={cap.id}
+                    data-no-scrub="true"
+                    onPointerDown={(e) =>
+                      handleItemDragStart(
+                        e,
+                        cap.id,
+                        'caption',
+                        cap.startTime,
+                        cap.endTime - cap.startTime
+                      )
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (hasMovedRef.current) return;
+                      setCurrentTime(cap.startTime);
+                      if (toolMode === 'select' && !isCaptionLocked && setSelectedCaptionId) {
+                        setSelectedCaptionId(cap.id);
+                        setSelectedClipId(null);
+                        setSelectedOverlayId(null);
+                        if (setSelectedSfxId) setSelectedSfxId(null);
+                      }
+                    }}
+                    style={{
+                      left: `${leftPx}px`,
+                      width: `${widthPx}px`,
+                    }}
+                    className={`absolute h-10 rounded-lg flex items-center px-2 border-2 transition-all shadow-md select-none group ${
+                      toolMode === 'select' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                    } ${
+                      isTriggeredNow
+                        ? 'bg-amber-900/90 border-amber-300 ring-2 ring-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.8)] scale-[1.02] z-20'
+                        : isSelected
+                        ? 'bg-amber-950 border-amber-400 ring-2 ring-amber-400/50 shadow-amber-950/80 z-20'
+                        : 'bg-amber-950/70 border-amber-700/60 hover:border-amber-500 z-10'
+                    }`}
+                  >
+                    {/* Left Trim Handle */}
+                    {!isCaptionLocked && (
+                      <div
+                        data-trim-handle="true"
+                        onPointerDown={(e) => handleCaptionTrimStart(e, cap.id, 'left')}
+                        title="Trim subtitle start"
+                        className="absolute left-0 top-0 bottom-0 w-2.5 bg-amber-500/30 hover:bg-amber-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-amber-500/60"
+                      >
+                        <div className="w-0.5 h-3 bg-white/80 rounded" />
+                      </div>
+                    )}
+
+                    <Subtitles className="w-3.5 h-3.5 text-amber-400 mr-1.5 shrink-0" />
+                    <span className="text-xs font-semibold text-amber-100 truncate">
+                      {cap.text}
+                    </span>
+                    <span className="ml-auto text-[9px] font-mono text-amber-300/70 shrink-0 pl-1.5">
+                      {(cap.endTime - cap.startTime).toFixed(1)}s
+                    </span>
+
+                    {/* Right Trim Handle */}
+                    {!isCaptionLocked && (
+                      <div
+                        data-trim-handle="true"
+                        onPointerDown={(e) => handleCaptionTrimStart(e, cap.id, 'right')}
+                        title="Trim subtitle end"
+                        className="absolute right-0 top-0 bottom-0 w-2.5 bg-amber-500/30 hover:bg-amber-400 cursor-col-resize flex items-center justify-center z-30 transition-colors group-hover:bg-amber-500/60"
+                      >
+                        <div className="w-0.5 h-3 bg-white/80 rounded" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
 
           {/* ========================================================= */}
           {/* TRACK 1: V2 OVERLAYS & TEXT STICKERS (h-14)               */}

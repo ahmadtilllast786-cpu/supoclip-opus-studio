@@ -103,14 +103,26 @@ export interface SfxTrackItem {
   audioBuffer?: AudioBuffer;
 }
 
+export interface CaptionTrackItem {
+  id: string;
+  text: string;
+  startTime: number;
+  endTime: number;
+  words: TranscriptWord[];
+  detectedLanguage?: string;
+  isLocked?: boolean;
+}
+
 export interface TranscriptWord {
   word: string;
   start: number;
   end: number;
+  confidence?: number;
   isSilence?: boolean;
   isFiller?: boolean;
   isEmphasis?: boolean;
   emoji?: string;
+  color?: string;
 }
 
 export interface DynamicZoomKeyframe {

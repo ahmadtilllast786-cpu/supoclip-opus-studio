@@ -1,9 +1,9 @@
-import React from 'react';
 import {
   Video,
   Layers,
   Music,
   Sparkles,
+  Subtitles,
   Lock,
   Unlock,
   Eye,
@@ -14,7 +14,7 @@ import {
   Plus,
 } from 'lucide-react';
 
-export type TrackType = 'overlay' | 'video' | 'audio' | 'sfx';
+export type TrackType = 'caption' | 'overlay' | 'video' | 'audio' | 'sfx';
 
 interface TimelineTrackHeaderProps {
   type: TrackType;
@@ -52,6 +52,12 @@ export const TimelineTrackHeader: React.FC<TimelineTrackHeaderProps> = ({
 }) => {
   // Theme styling based on track type
   const theme = {
+    caption: {
+      badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+      icon: <Subtitles className="w-3.5 h-3.5 text-amber-400" />,
+      border: 'border-amber-500/20',
+      accent: 'text-amber-300',
+    },
     overlay: {
       badgeBg: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
       icon: <Layers className="w-3.5 h-3.5 text-purple-400" />,

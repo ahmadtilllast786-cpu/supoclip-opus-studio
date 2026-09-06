@@ -15,6 +15,7 @@ import {
   CaptionTemplate,
   TranscriptWord,
   ViralClipSegment,
+  CaptionTrackItem,
 } from './types/timeline';
 import { Navbar } from './components/Navbar';
 import { CanvasPlayer } from './components/Player/CanvasPlayer';
@@ -33,6 +34,7 @@ import { SUPOCLIP_CAPTION_TEMPLATES } from './core/captions/supoClipTemplates';
 import { generateViralMoments, generateAdaptiveTranscript } from './core/ai/viralityScorer';
 import { autoTranscribeVideoAudio } from './core/ai/captionTranscriber';
 import { decodeAudioBuffer, generateWaveformPeaks } from './core/audio/audioAnalyzer';
+import { groupWordsIntoCaptionChunks } from './core/captions/captionHandler';
 
 export function App() {
   const [clips, setClips] = useState<VideoClip[]>([]);
@@ -47,6 +49,10 @@ export function App() {
   const [hookTitle, setHookTitle] = useState<string | null>(null);
   const [showCaptions, setShowCaptions] = useState<boolean>(true);
   const [words, setWords] = useState<TranscriptWord[]>([]);
+  const [captions, setCaptions] = useState<CaptionTrackItem[]>([]);
+  const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
+  const [detectedLanguage, setDetectedLanguage] = useState<string>('en');
+  const [detectedConfidence, setDetectedConfidence] = useState<number>(0.96);
 
   const [viralMoments, setViralMoments] = useState<ViralClipSegment[]>([]);
   const [activeMomentId, setActiveMomentId] = useState<string | null>(null);
@@ -130,6 +136,8 @@ export function App() {
           const demoWords = await autoTranscribeVideoAudio(audioBuf);
           if (isMounted) {
             setWords(demoWords);
+            const chunks = groupWordsIntoCaptionChunks(demoWords, { detectedLanguage: 'en' });
+            setCaptions(chunks);
             setShowCaptions(true);
             const moments = generateViralMoments([demoClip], 30, demoWords);
             setViralMoments(moments);
@@ -213,6 +221,9 @@ export function App() {
             ? [...prevWords, ...adjustedWords].sort((a, b) => a.start - b.start)
             : adjustedWords;
 
+          const chunks = groupWordsIntoCaptionChunks(combined, { detectedLanguage });
+          setCaptions(chunks);
+
           setClips((currentClips) => {
             const moments = generateViralMoments(currentClips, 30, combined);
             setViralMoments(moments);
@@ -285,8 +296,10 @@ export function App() {
     setActiveMomentId(moment.id);
     setHookTitle(moment.scores.hookTitle);
     setWords(moment.words);
+    const chunks = groupWordsIntoCaptionChunks(moment.words, { detectedLanguage });
+    setCaptions(chunks);
     setCurrentTime(0);
-  }, []);
+  }, [detectedLanguage]);
 
   // Selected Clip, Overlay, and SFX objects
   const selectedClip = clips.find((c) => c.id === selectedClipId) || null;
@@ -440,6 +453,12 @@ export function App() {
                 setShowCaptions={setShowCaptions}
                 words={words}
                 setWords={setWords}
+                captions={captions}
+                setCaptions={setCaptions}
+                detectedLanguage={detectedLanguage}
+                setDetectedLanguage={setDetectedLanguage}
+                detectedConfidence={detectedConfidence}
+                setDetectedConfidence={setDetectedConfidence}
                 currentTime={currentTime}
                 onSeek={(t) => setCurrentTime(t)}
                 clips={clips}
@@ -556,12 +575,27 @@ export function App() {
         setZoomKeyframes={setZoomKeyframes}
         sfxTracks={sfxTracks}
         setSfxTracks={setSfxTracks}
+        captions={captions}
+        setCaptions={setCaptions}
+        selectedCaptionId={selectedCaptionId}
+        setSelectedCaptionId={(id) => {
+          setSelectedCaptionId(id);
+          if (id) {
+            setSelectedClipId(null);
+            setSelectedOverlayId(null);
+            setSelectedSfxId(null);
+          }
+        }}
+        words={words}
+        setWords={setWords}
+        detectedLanguage={detectedLanguage}
         selectedClipId={selectedClipId}
         setSelectedClipId={(id) => {
           setSelectedClipId(id);
           if (id) {
             setSelectedOverlayId(null);
             setSelectedSfxId(null);
+            setSelectedCaptionId(null);
           }
         }}
         selectedOverlayId={selectedOverlayId}
@@ -570,6 +604,7 @@ export function App() {
           if (id) {
             setSelectedClipId(null);
             setSelectedSfxId(null);
+            setSelectedCaptionId(null);
           }
         }}
         selectedSfxId={selectedSfxId}
@@ -578,6 +613,7 @@ export function App() {
           if (id) {
             setSelectedClipId(null);
             setSelectedOverlayId(null);
+            setSelectedCaptionId(null);
           }
         }}
         onAddPunchZoom={handleAddPunchZoom}
