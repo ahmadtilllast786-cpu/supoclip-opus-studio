@@ -94,8 +94,11 @@ export const TimelineRuler: React.FC<TimelineRulerProps> = ({
   else if (pixelsPerSecond < 70) majorTickInterval = 2;
   else if (pixelsPerSecond > 160) majorTickInterval = 0.5;
 
-  const totalTicks = Math.ceil(totalDuration / majorTickInterval) + 2;
-  const ticks = Array.from({ length: totalTicks }, (_, i) => i * majorTickInterval);
+  const effectiveRulerDuration = projectEndSec > 0 ? projectEndSec : totalDuration;
+  const totalTicks = Math.ceil(effectiveRulerDuration / majorTickInterval) + 1;
+  const ticks = Array.from({ length: totalTicks }, (_, i) => i * majorTickInterval).filter(
+    (t) => t <= effectiveRulerDuration + 0.01
+  );
 
   return (
     <div

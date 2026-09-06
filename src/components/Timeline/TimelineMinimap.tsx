@@ -47,7 +47,7 @@ export const TimelineMinimap: React.FC<TimelineMinimapProps> = ({
 
     // Also scroll the main container to center around this time
     if (containerRef.current) {
-      const targetScroll = 112 + seekTime * pixelsPerSecond - containerRef.current.clientWidth / 2;
+      const targetScroll = 128 + seekTime * pixelsPerSecond - containerRef.current.clientWidth / 2;
       containerRef.current.scrollTo({ left: Math.max(0, targetScroll), behavior: 'smooth' });
     }
   };
@@ -58,7 +58,7 @@ export const TimelineMinimap: React.FC<TimelineMinimapProps> = ({
   if (containerRef.current && timelineWidth > 0) {
     const scrollLeft = containerRef.current.scrollLeft;
     const clientWidth = containerRef.current.clientWidth;
-    const visibleStartSec = Math.max(0, (scrollLeft - 112) / pixelsPerSecond);
+    const visibleStartSec = Math.max(0, (scrollLeft - 128) / pixelsPerSecond);
     const visibleDuration = clientWidth / pixelsPerSecond;
 
     viewportLeftPercent = toPercent(visibleStartSec);

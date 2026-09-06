@@ -766,7 +766,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             <div className="relative flex-1 h-full flex items-center">
               {overlays.map((ov) => {
                 const isSelected = selectedOverlayId === ov.id;
-                const leftPx = TRACK_HEADER_WIDTH + ov.startTimelineTime * pixelsPerSecond;
+                const leftPx = ov.startTimelineTime * pixelsPerSecond;
                 const widthPx = Math.max(30, ov.duration * pixelsPerSecond);
 
                 return (
@@ -827,7 +827,7 @@ export const Timeline: React.FC<TimelineProps> = ({
               {clips.map((clip, idx) => {
                 const isSelected = selectedClipId === clip.id;
                 const isTrimming = trimmingClipId === clip.id;
-                const leftPx = TRACK_HEADER_WIDTH + clip.startTimelineTime * pixelsPerSecond;
+                const leftPx = clip.startTimelineTime * pixelsPerSecond;
                 const widthPx = clip.duration * pixelsPerSecond;
 
                 return (
@@ -997,7 +997,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             <div className="relative flex-1 h-full flex items-center">
               {clips.map((clip) => {
                 const isSelected = selectedClipId === clip.id;
-                const leftPx = TRACK_HEADER_WIDTH + clip.startTimelineTime * pixelsPerSecond;
+                const leftPx = clip.startTimelineTime * pixelsPerSecond;
                 const widthPx = clip.duration * pixelsPerSecond;
                 const numBars = Math.max(16, Math.floor(widthPx / 3.5));
 
@@ -1161,7 +1161,7 @@ export const Timeline: React.FC<TimelineProps> = ({
             <div className="relative flex-1 h-full flex items-center">
               {sfxTracks.map((sfx) => {
                 const isSelected = selectedSfxId === sfx.id;
-                const leftPx = TRACK_HEADER_WIDTH + sfx.startTimelineTime * pixelsPerSecond;
+                const leftPx = sfx.startTimelineTime * pixelsPerSecond;
                 const widthPx = Math.max(50, sfx.duration * pixelsPerSecond);
 
                 const isTriggeredNow =

@@ -80,7 +80,8 @@ export const TimelineTrackHeader: React.FC<TimelineTrackHeaderProps> = ({
 
   return (
     <div
-      className={`sticky left-0 z-30 w-28 sm:w-32 shrink-0 h-full bg-slate-900/95 border-r border-slate-700/80 px-2 py-1.5 flex flex-col justify-between select-none shadow-md backdrop-blur-xs`}
+      style={{ width: '128px' }}
+      className="sticky left-0 z-30 w-32 shrink-0 h-full bg-slate-900/95 border-r border-slate-700/80 px-2 py-1.5 flex flex-col justify-between select-none shadow-md backdrop-blur-xs"
     >
       {/* Top: Track Type Badge & Label */}
       <div className="flex items-center justify-between">
